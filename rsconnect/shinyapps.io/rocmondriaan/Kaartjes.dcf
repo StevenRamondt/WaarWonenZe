@@ -1,0 +1,13 @@
+name: Kaartjes
+title: kaartjes
+username: rocmondriaan
+account: rocmondriaan
+server: shinyapps.io
+hostUrl: https://api.shinyapps.io/v1
+appId: 16690930
+bundleId: 11592458
+url: https://rocmondriaan.shinyapps.io/Kaartjes/
+version: 1
+asMultiple: FALSE
+asStatic: FALSE
+ignoredFiles: data/reference/wijk_2024.csv|output/plot/Haaglanden_gemeente_plot_20260115.png|output/plot/Haaglanden_gemeente_plot_20260216.png|output/tabel/Haaglanden_gemeente_tabel_20260115.png|output/tabel/Haaglanden_gemeente_tabel_20260216.png
