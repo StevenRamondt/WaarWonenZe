@@ -1,6 +1,6 @@
 # =============================================================================
 # main.R
-# Hoofdscript voor het genereren van choropleth kaarten
+# Hoofdscript voor het genereren van choropleth kaarten (zonder app)
 # =============================================================================
 
 # -----------------------------------------------------------------------------
@@ -27,7 +27,7 @@ source(here::here("R", "functions.R"))
 
 # Kies profiel: "den_haag", "haaglanden", "zuid_holland", "nederland"
 # Of een custom profiel uit config.yml
-PROFIEL <- "haaglanden"
+if (!exists("PROFIEL")) PROFIEL <- "haaglanden"
 
 # Laad configuratie
 config <- laad_config(PROFIEL)
@@ -40,148 +40,59 @@ message(paste("Niveau:", config$niveau))
 message(paste("Titel:", config$titel))
 message("============================")
 
+ontbrekend <- ontbrekende_referentiedata(config)
+if (length(ontbrekend) > 0) {
+  stop("Referentiedata ontbreekt: ", paste(ontbrekend, collapse = ", "),
+       ". Run eerst: Rscript scripts/prepare_data.R")
+}
+
 # -----------------------------------------------------------------------------
 # DATA LADEN
 # -----------------------------------------------------------------------------
 
-message("\n[1/6] Data laden...")
-
-# Laad geo data
-geo <- laad_geo_data(
-  gpkg_path = here::here(config$data$gpkg),
-  niveau = config$niveau
-)
-message(paste("  - Geo data geladen:", nrow(geo), "records"))
-
-# Laad studenten data
-studenten <- laad_studenten_data(
-  path = here::here(config$data$studenten)
-)
-message(paste("  - Studenten data geladen:", nrow(studenten), "records"))
-
-# Laad gemeente referentie (voor provincie filter)
-gemeente_ref <- laad_gemeente_ref(
-  path = here::here(config$data$gemeenten_ref)
-)
-message(paste("  - Gemeente referentie geladen:", nrow(gemeente_ref), "gemeenten"))
-
-# -----------------------------------------------------------------------------
-# DATA FILTEREN
-# -----------------------------------------------------------------------------
-
-message("\n[2/6] Data filteren...")
-
-# Filter geo data op basis van config
-geo_filtered <- filter_geo_data(
-  geo = geo,
-  config = config,
-  gemeente_ref = gemeente_ref
-)
-message(paste("  - Geo data gefilterd:", nrow(geo_filtered), "records"))
-
-# Verwijder dubbele geometrieën (strand/zee)
-code_kolom <- if (config$niveau == "gemeente") "GM_CODE" else "WK_CODE"
-geo_filtered <- verwijder_dubbele_geometrie(geo_filtered, code_kolom)
-message(paste("  - Dubbele geometrieën verwijderd:", nrow(geo_filtered), "records"))
-
-# -----------------------------------------------------------------------------
-# DATA AGGREGEREN
-# -----------------------------------------------------------------------------
-
-message("\n[3/6] Studenten aggregeren...")
-
-# Laad PC6-wijk mapping indien wijk niveau
-pc6_wijk_mapping <- NULL
-if (config$niveau == "wijk") {
-  message("  - PC6-wijk mapping laden...")
-  pc6_wijk_mapping <- maak_postcode_wijk_mapping(
-    path = here::here(config$data$pc6_wijk_ref)
-  )
-  message(paste("  - PC6-wijk mapping geladen:", nrow(pc6_wijk_mapping), "postcodes"))
+studenten_pad <- here::here(config$data$studenten)
+if (!file.exists(studenten_pad)) {
+  message("Geen ", config$data$studenten, " gevonden: demodata wordt gebruikt.")
+  studenten_pad <- here::here(config$data$demo)
 }
 
-# Aggregeer studenten per gebied
-studenten_agg <- aggregeer_studenten(
-  df = studenten,
-  niveau = config$niveau,
-  pc6_wijk_mapping = pc6_wijk_mapping
-)
-message(paste("  - Geaggregeerd naar", nrow(studenten_agg), "gebieden"))
-
-# Merge met geo data
-data <- merge_studenten_geo(
-  geo = geo_filtered,
-  studenten_agg = studenten_agg,
-  niveau = config$niveau
-)
-message(paste("  - Totaal studenten in gebied:", sum(data$aantal, na.rm = TRUE)))
+studenten <- laad_studenten_data(studenten_pad)
+message(paste("Studenten data geladen:", nrow(studenten), "records"))
 
 # -----------------------------------------------------------------------------
-# CATEGORISEREN
+# KAART EN TABEL MAKEN
 # -----------------------------------------------------------------------------
 
-message("\n[4/6] Aantallen categoriseren...")
-
-# Bepaal breaks
-breaks_info <- bepaal_breaks(
-  data = data$aantal,
-  preset = config$breaks_preset
-)
-message(paste("  - Breaks preset:", config$breaks_preset))
-message(paste("  - Categorieën:", paste(breaks_info$labels, collapse = ", ")))
-
-# Voeg categorieën toe
-data <- categoriseer_aantallen(data, breaks_info)
-
-# -----------------------------------------------------------------------------
-# PLOT MAKEN
-# -----------------------------------------------------------------------------
-
-message("\n[5/6] Choropleth maken...")
-
-# Maak locaties sf object (indien geconfigureerd)
-locaties_sf <- maak_locaties_sf(config, sf::st_crs(data))
-
-# Maak plot
-plot <- maak_choropleth(
-  data = data,
+resultaat <- genereer_kaart(
+  studenten = studenten,
   config = config,
-  breaks_info = breaks_info,
-  locaties_sf = locaties_sf,
-  niveau = config$niveau
+  voortgang = function(fractie, detail) message(detail)
 )
 
-# Genereer bestandsnaam en sla op
-plot_bestand <- genereer_bestandsnaam(config, config$niveau, "plot")
-plot_path <- here::here("output", "plot", plot_bestand)
+message(beschrijf_koppelrapport(resultaat$rapport))
+message(paste("Categorieën:", paste(resultaat$breaks_info$labels, collapse = ", ")))
 
-# Maak output directory indien nodig
+# -----------------------------------------------------------------------------
+# OPSLAAN
+# -----------------------------------------------------------------------------
+
 dir.create(here::here("output", "plot"), recursive = TRUE, showWarnings = FALSE)
-
-sla_plot_op(plot, plot_path)
-
-# -----------------------------------------------------------------------------
-# TABEL MAKEN
-# -----------------------------------------------------------------------------
-
-message("\n[6/6] Tabel maken...")
-
-# Maak tabel
-tabel <- maak_tabel(
-  data = data,
-  config = config,
-  niveau = config$niveau,
-  min_aantal = 10
-)
-
-# Genereer bestandsnaam en sla op
-tabel_bestand <- genereer_bestandsnaam(config, config$niveau, "tabel")
-tabel_path <- here::here("output", "tabel", tabel_bestand)
-
-# Maak output directory indien nodig
 dir.create(here::here("output", "tabel"), recursive = TRUE, showWarnings = FALSE)
 
-sla_tabel_op(tabel, tabel_path)
+plot_path <- here::here("output", "plot",
+                        genereer_bestandsnaam(config, config$niveau, "plot"))
+sla_plot_op(resultaat$plot, plot_path)
+
+tabel_path <- here::here("output", "tabel",
+                         genereer_bestandsnaam(config, config$niveau, "tabel"))
+tryCatch(
+  sla_tabel_op(resultaat$tabel, tabel_path),
+  error = function(e) {
+    tabel_path <<- sub("\\.png$", ".csv", tabel_path)
+    utils::write.csv(resultaat$tabel_data, tabel_path, row.names = FALSE)
+    message("PNG van tabel mislukt (webshot2/Chrome nodig); CSV opgeslagen: ", tabel_path)
+  }
+)
 
 # -----------------------------------------------------------------------------
 # KLAAR

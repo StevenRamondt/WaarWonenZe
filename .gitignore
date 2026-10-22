@@ -1,0 +1,26 @@
+# Persoonsgegevens: nooit committen
+eelke porjecten/
+data/01_raw/
+*.numbers
+
+# Studentdata als Excel, behalve fictieve voorbeelddata
+*.xlsx
+*.xls
+!data/voorbeeld/*.xlsx
+
+# Gegenereerde output
+output/
+
+# R / RStudio
+.Rhistory
+.RData
+.Rproj.user/
+
+# macOS
+.DS_Store
+
+# R graphics device output
+Rplots.pdf
+
+# pixi omgeving (wordt lokaal aangemaakt)
+.pixi/
