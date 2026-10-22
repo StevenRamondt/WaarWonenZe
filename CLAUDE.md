@@ -16,10 +16,12 @@ Gebouwd voor Nederlandse onderwijsinstellingen (mbo, hbo, wo).
 ├── R/
 │   └── functions.R         # Alle herbruikbare functies (pipeline: genereer_kaart())
 ├── scripts/
-│   ├── prepare_data.R      # Download + verklein CBS-referentiedata
+│   ├── prepare_data.R      # CBS-referentiedata voor een jaargang (wrapper om maak_referentiedata())
+│   ├── geocode_locaties.R  # Coördinaten aanvullen in locaties-CSV (PDOK)
 │   └── maak_demo_data.R    # Synthetische demodata uit een echte export
 ├── data/
-│   ├── reference/          # Voorbewerkte CBS-data (.rds, in git)
+│   ├── reference/          # Voorbewerkte CBS-data per jaargang (<type>_<jaar>.rds, in git)
+│   ├── locaties_roc_mondriaan.csv  # Schoollocaties (; gescheiden, bewerkbaar in Excel)
 │   ├── voorbeeld/          # Fictieve demodata + template (in git)
 │   └── 01_raw/             # Echte studentdata (NIET in git)
 ├── tests/                  # testthat tests (Rscript tests/testthat.R)
@@ -70,6 +72,8 @@ mijn_regio:
 - Koppelen op **code** (GM_CODE/WK_CODE), niet op naam
 - Klassen zijn rechts-gesloten: breaks `c(1, 200, 500)` → `1-200`, `201-500`
 - Nooit echte studentdata committen; de repo is publiek
+- Jaargang: config$jaar, anders jaar van kolom Peildatum, anders nieuwste (kies_jaargang())
+- CBS-URL's verschillen per jaar: altijd via zoek_cbs_urls(), nooit hardcoden
 - Starters: `.bat` met CRLF, `.command` met LF en executable bit (zie .gitattributes)
 
 ## Studentendata vereisten
@@ -86,4 +90,7 @@ Als iets niet werkt: beschrijf het probleem en voeg oplossing toe aan dit bestan
 
 - **`show.legend = "polygon"` crasht in ggplot2 ≥ 4.0** (`x must be a vector, not NULL`). Gebruik `show.legend = TRUE`; dat is ook nodig om lege klassen in de legenda te tonen.
 - **dplyr-verbs op een sf-object uit `readRDS()` falen** als sf niet geladen is. `laad_geo_data()` laadt sf daarom expliciet.
-- **Zee/strand bij kustgemeenten**: de CBS GPKG heeft een kolom `water` (`JA`/`NEE`/`B`); `prepare_data.R` houdt alleen `NEE`.
+- **Zee/strand bij kustgemeenten**: de CBS GPKG heeft een kolom `water` (`JA`/`NEE`/`B`); `maak_referentiedata()` houdt alleen `NEE`.
+- **CBS-bestanden verschillen per jaar/versie**: laagnamen (`gemeenten_v0` vs `gemeenten`), kolomnamen (`gm_code` vs `gemeentecode` in v1), 3D-geometrie (2026), submap in zip. `maak_referentiedata()` zoekt op patroon.
+- **`as.Date("01-10-2026", "%Y-%m-%d")` geeft geen NA maar jaar 1**: datumformaat eerst met regex bepalen.
+- **Tabel-PNG op Windows**: webshot2 zoekt Chrome; `zoek_browser_voor_png()` valt terug op Edge.

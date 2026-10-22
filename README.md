@@ -10,7 +10,7 @@ Je hoeft zelf niets te installeren; R en alle packages worden automatisch binnen
 2. Dubbelklik op **`Start app.command`** (macOS) of **`Start app.bat`** (Windows).
 3. De app opent in je browser. Klik op **Gebruik demodata** en daarna op **Genereer kaart & tabel**.
 
-Werkt het? Upload dan je eigen export (`.xlsx`) in plaats van de demodata. Sluit het terminalvenster om de app te stoppen.
+Werkt het? Upload dan je eigen export (`.xlsx` of `.csv`) in plaats van de demodata. Sluit het terminalvenster om de app te stoppen.
 
 De eerste start duurt enkele minuten: [pixi](https://pixi.sh) installeert R en de packages (ca. 1,5 GB) in een eigen map binnen het project. Je bestaande software wordt niet aangeraakt. Daarna start de app binnen enkele seconden. De app draait volledig lokaal; geüploade data verlaat je computer niet.
 
@@ -22,14 +22,16 @@ Al pixi geïnstalleerd, of op Linux? Run dan `pixi run app` in de projectmap.
 
 ## Studentendata
 
-Upload via de app als `.xlsx`. Minimale kolommen (download een voorbeeld via **Download template** in de app):
+Upload via de app als `.xlsx` of `.csv` (ook CSV uit Nederlandse Excel: puntkomma, `WAAR`/`ONWAAR`). Minimale kolommen (download een voorbeeld via **Download template** in de app):
 
 | Kolom | Gebruikt voor | Voorbeeld |
 |-------|---------------|-----------|
 | `Gemeente` | Gemeenteniveau | `'s-Gravenhage`, `Den Haag`, `Rijswijk (ZH.)` |
 | `Postcode` | Wijkniveau (via CBS koppeltabel) | `2612PD` of `2612 pd` |
 
-Exports uit de inschrijvingscube (kolomnamen als `[Gemeente]`) werken direct. Overige kolommen zoals `IsBekostigd`, `Leerweg` of `Niveau` kun je in de app als **filter** gebruiken.
+Exports uit de inschrijvingscube (kolomnamen als `[Gemeente]`) werken direct. Overige kolommen zoals `IsBekostigd`, `Leerweg`, `Niveau` of `CampusOms` kun je in de app als **filter** gebruiken.
+
+Heeft de data een kolom `Peildatum`, dan neemt de app die over in de titel ("1 okt 2026") en kiest hij de bijbehorende **jaargang** van de CBS-kaart.
 
 De app draait alleen lokaal: geüploade data blijft op je eigen computer. Studentdata hoort nooit in deze repository; `.gitignore` sluit `data/01_raw/` en Excel-bestanden uit.
 
@@ -67,19 +69,25 @@ Liever in je eigen RStudio? Run eenmalig `setup.R` (installeert de packages in j
 
 Alle profielen filteren standaard op `IsBekostigd = TRUE` (als die kolom bestaat). Eigen profielen, filters en klassegrenzen voeg je toe in `config.yml`.
 
-## Referentiedata
+## Referentiedata (jaargangen)
 
-De app gebruikt compacte, voorbewerkte CBS-bestanden in `data/reference/` (meegeleverd, ~2,5 MB):
+De app gebruikt compacte, voorbewerkte CBS-bestanden in `data/reference/`, per jaargang (~2,5 MB per jaar). Meegeleverd: **2025 en 2026**.
 
 | Bestand | Inhoud |
 |---------|--------|
-| `gemeenten_2025.rds` | Gemeentegrenzen + provincie |
-| `wijken_2025.rds` | Wijkgrenzen |
-| `pc6_2025.rds` | Postcode (PC6) → wijk en gemeente |
+| `gemeenten_<jaar>.rds` | Gemeentegrenzen + provincie |
+| `wijken_<jaar>.rds` | Wijkgrenzen + provincie |
+| `pc6_<jaar>.rds` | Postcode (PC6) → wijk en gemeente |
 
-Bijwerken naar een nieuwe jaargang: pas jaar en URL's aan in `scripts/prepare_data.R` en run `Rscript scripts/prepare_data.R`.
+**Nieuwe jaargang (bijv. 2027):** in de app via **Andere jaargang ophalen**. Heeft je data een peildatum in een jaar dat nog ontbreekt, dan biedt de app dit zelf aan. De app zoekt de juiste CBS-bestanden op, downloadt ze (~400 MB, tijdelijk) en bewerkt ze voor; dat duurt een paar minuten. Zonder app: `pixi run prepare-data 2027`. Het CBS publiceert de kaart meestal in juni en de postcodetabel in september.
 
-Bron: [CBS Wijk- en buurtkaart 2025](https://www.cbs.nl/nl-nl/dossier/nederland-regionaal/geografische-data/wijk-en-buurtkaart-2025), [CBS Buurt, wijk en gemeente 2025 voor postcode huisnummer](https://www.cbs.nl/nl-nl/maatwerk/2025/38/buurt-wijk-en-gemeente-2025-voor-postcode-huisnummer), [CBS Gemeentelijke indeling 2025](https://www.cbs.nl/nl-nl/onze-diensten/methoden/classificaties/overig/gemeentelijke-indelingen-per-jaar/indeling-per-jaar/gemeentelijke-indeling-op-1-januari-2025). Licentie CC BY 4.0.
+Bron: CBS, [Wijk- en buurtkaart](https://www.cbs.nl/nl-nl/dossier/nederland-regionaal/geografische-data/wijk-en-buurtkaart), Buurt, wijk en gemeente voor postcode huisnummer, Gemeentelijke indeling. Licentie CC BY 4.0.
+
+## Schoollocaties
+
+De locaties van ROC Mondriaan staan in `data/locaties_roc_mondriaan.csv` (kolommen `code;adres;plaats;campus;lat;lon`) en zijn aan/uit te zetten met **Toon schoollocaties**. Filter je op `CampusOms` of `LocatieOms`, dan toont de kaart alleen die locaties.
+
+Locatie toevoegen: vul een rij aan met code, adres, plaats en campus (lat/lon leeg) en run `pixi run Rscript scripts/geocode_locaties.R`; de coördinaten komen van de PDOK Locatieserver (BAG).
 
 ## Demodata
 
