@@ -1,0 +1,33 @@
+name: tests
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: r-lib/actions/setup-r@v2
+        with:
+          use-public-rspm: true
+
+      - uses: r-lib/actions/setup-r-dependencies@v2
+        with:
+          packages: |
+            any::shiny
+            any::sf
+            any::ggplot2
+            any::dplyr
+            any::readxl
+            any::yaml
+            any::gt
+            any::RColorBrewer
+            any::purrr
+            any::here
+            any::testthat
+
+      - name: Run tests
+        run: Rscript tests/testthat.R
