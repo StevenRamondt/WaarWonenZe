@@ -4,6 +4,7 @@ test_that("filter_studenten vergelijkt als tekst en slaat ontbrekende kolommen o
   res <- filter_studenten(df, list(IsBekostigd = TRUE, Leerweg = "BBL", Bestaat = "x"))
   expect_equal(nrow(res), 1)
   expect_equal(attr(res, "overgeslagen"), "Bestaat")
+  expect_equal(attr(res, "weggefilterd"), c(IsBekostigd = 1L, Leerweg = 1L))
 
   expect_equal(nrow(filter_studenten(df, list(IsBekostigd = "TRUE"))), 2)
   expect_equal(nrow(filter_studenten(df, list(Leerweg = character(0)))), 3)
@@ -33,4 +34,13 @@ test_that("filter_geo_data op codes en provincie", {
   expect_equal(nrow(filter_geo_data(geo, list(gebied = list(filter = list(gm_codes = "GM3"))))), 1)
   expect_equal(nrow(filter_geo_data(geo, list(gebied = list(filter = list(provincie = "A"))))), 2)
   expect_equal(nrow(filter_geo_data(geo, list(gebied = list(filter = NULL)))), 3)
+})
+
+test_that("koppelrapport noemt de filters die studenten wegfilterden", {
+  rapport <- list(op_kaart = 5, na_filter = 6, voor_filter = 10, buiten_gebied = 1,
+                  niet_herkend = 0, weggefilterd_per_filter = c(IsBekostigd = 3L, Leerweg = 1L))
+  expect_match(beschrijf_koppelrapport(rapport), "4 weggefilterd door filters IsBekostigd \\(3\\), Leerweg \\(1\\)")
+
+  rapport$weggefilterd_per_filter <- c(IsBekostigd = 4L, Leerweg = 0L)
+  expect_match(beschrijf_koppelrapport(rapport), "4 weggefilterd door filter IsBekostigd\\)")
 })

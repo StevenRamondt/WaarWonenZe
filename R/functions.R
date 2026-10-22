@@ -210,7 +210,8 @@ filterbare_kolommen <- function(df, max_waarden = 50) {
 #' @param df Data frame met studenten data
 #' @param filters Named list: kolomnaam -> toegestane waarden
 #'
-#' @return Gefilterd data frame met attribuut "overgeslagen" (ontbrekende kolommen)
+#' @return Gefilterd data frame met attributen "overgeslagen" (ontbrekende
+#'   kolommen) en "weggefilterd" (aantal verwijderde rijen per kolom, in volgorde)
 #'
 #' @examples
 #' filter_studenten(df, list(IsBekostigd = TRUE, Leerweg = c("BBL")))
@@ -219,6 +220,7 @@ filterbare_kolommen <- function(df, max_waarden = 50) {
 filter_studenten <- function(df, filters) {
 
   overgeslagen <- character(0)
+  weggefilterd <- integer(0)
 
   for (kolom in names(filters)) {
     waarden <- filters[[kolom]]
@@ -229,10 +231,13 @@ filter_studenten <- function(df, filters) {
       next
     }
 
+    n_voor <- nrow(df)
     df <- df[as.character(df[[kolom]]) %in% as.character(waarden), , drop = FALSE]
+    weggefilterd[kolom] <- n_voor - nrow(df)
   }
 
   attr(df, "overgeslagen") <- overgeslagen
+  attr(df, "weggefilterd") <- weggefilterd
   return(df)
 }
 
@@ -874,6 +879,7 @@ genereer_kaart <- function(studenten, config,
   code_kolom <- if (niveau == "gemeente") "GM_CODE" else "WK_CODE"
   rapport <- maak_koppelrapport(gekoppeld, geo[[code_kolom]], n_voor_filter)
   rapport$filters_overgeslagen <- attr(studenten, "overgeslagen")
+  rapport$weggefilterd_per_filter <- attr(studenten, "weggefilterd")
 
   data <- merge_studenten_geo(geo, aggregeer_studenten(gekoppeld, niveau), niveau)
 
@@ -926,8 +932,17 @@ beschrijf_koppelrapport <- function(rapport) {
     rapport$op_kaart, rapport$na_filter, rapport$buiten_gebied, rapport$niet_herkend
   )
   if (rapport$na_filter < rapport$voor_filter) {
+    per_filter <- rapport$weggefilterd_per_filter
+    per_filter <- per_filter[per_filter > 0]
+    door <- if (length(per_filter) == 1) {
+      paste(" door filter", names(per_filter))
+    } else if (length(per_filter) > 1) {
+      paste(" door filters", paste0(names(per_filter), " (", per_filter, ")", collapse = ", "))
+    } else {
+      ""
+    }
     tekst <- paste0(
-      tekst, " (", rapport$voor_filter - rapport$na_filter, " weggefilterd)"
+      tekst, " (", rapport$voor_filter - rapport$na_filter, " weggefilterd", door, ")"
     )
   }
   if (length(rapport$filters_overgeslagen) > 0) {
