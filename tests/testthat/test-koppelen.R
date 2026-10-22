@@ -32,10 +32,22 @@ test_that("wijkkoppeling werkt met vuile postcodes", {
   expect_equal(gekoppeld$code, c("WK050301", "WK050302", NA, NA))
 })
 
+test_that("niet herkende postcodes krijgen een reden", {
+  pc6 <- data.frame(PC6 = "2612PD", WK_CODE = "WK050301")
+  df <- data.frame(Postcode = c("2612 pd", "2526", "9999ZZ", "abc", NA, " "))
+  gekoppeld <- koppel_studenten(df, "wijk", pc6_mapping = pc6)
+
+  expect_equal(
+    gekoppeld$reden,
+    c(NA, "alleen 4 cijfers", "postcode niet gevonden", "ongeldige postcode", "leeg", "leeg")
+  )
+})
+
 test_that("koppelrapport telt kaart, buiten gebied en niet herkend", {
   gekoppeld <- data.frame(
     bron = c("a", "a", "b", "c", NA),
-    code = c("GM1", "GM1", "GM2", NA, NA)
+    code = c("GM1", "GM1", "GM2", NA, NA),
+    reden = c(NA, NA, NA, "gemeente onbekend", "leeg")
   )
   rapport <- maak_koppelrapport(gekoppeld, geo_codes = "GM1", n_voor_filter = 7)
 

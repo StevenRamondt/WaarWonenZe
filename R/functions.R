@@ -359,7 +359,7 @@ koppel_gemeente_code <- function(namen, gemeenten) {
 #' @param gemeenten sf/data frame met GM_CODE en GM_NAAM
 #' @param pc6_mapping Data frame met PC6 en WK_CODE (vereist voor wijk niveau)
 #'
-#' @return Data frame met kolommen bron (oorspronkelijke waarde) en code
+#' @return Data frame met kolommen bron (oorspronkelijke waarde), code en reden
 #'
 #' @export
 koppel_studenten <- function(df, niveau,
@@ -379,7 +379,40 @@ koppel_studenten <- function(df, niveau,
     code <- pc6_mapping$WK_CODE[match(normaliseer_postcode(bron), pc6_mapping$PC6)]
   }
 
-  data.frame(bron = as.character(bron), code = code, stringsAsFactors = FALSE)
+  bron <- as.character(bron)
+  data.frame(
+    bron = bron,
+    code = code,
+    reden = bepaal_reden_niet_herkend(bron, code, niveau),
+    stringsAsFactors = FALSE
+  )
+}
+
+
+#' Reden waarom een waarde niet gekoppeld kon worden
+#'
+#' @param bron Character vector met oorspronkelijke waarden
+#' @param code Character vector met gekoppelde codes (NA = niet herkend)
+#' @param niveau Character, "gemeente" of "wijk"
+#'
+#' @return Character vector met reden, NA voor gekoppelde waarden
+bepaal_reden_niet_herkend <- function(bron, code, niveau) {
+
+  schoon <- toupper(gsub("\\s", "", bron))
+
+  reden <- if (niveau == "gemeente") {
+    rep("gemeente onbekend", length(bron))
+  } else {
+    dplyr::case_when(
+      grepl("^[0-9]{4}$", schoon) ~ "alleen 4 cijfers",
+      is.na(normaliseer_postcode(bron)) ~ "ongeldige postcode",
+      TRUE ~ "postcode niet gevonden"
+    )
+  }
+
+  reden[is.na(bron) | trimws(bron) == ""] <- "leeg"
+  reden[!is.na(code)] <- NA
+  reden
 }
 
 
@@ -435,7 +468,7 @@ merge_studenten_geo <- function(geo, studenten_agg, niveau) {
 #' @param geo_codes Character vector met codes van gebieden op de kaart
 #' @param n_voor_filter Integer, aantal studenten vóór het filteren
 #'
-#' @return List met aantallen en een data frame niet_herkend (waarde, aantal)
+#' @return List met aantallen en een data frame niet_herkend_waarden (waarde, reden, aantal)
 #'
 #' @export
 maak_koppelrapport <- function(gekoppeld, geo_codes, n_voor_filter = nrow(gekoppeld)) {
@@ -444,7 +477,7 @@ maak_koppelrapport <- function(gekoppeld, geo_codes, n_voor_filter = nrow(gekopp
 
   niet_herkend <- gekoppeld[!herkend, , drop = FALSE] |>
     dplyr::mutate(waarde = ifelse(is.na(bron) | bron == "", "(leeg)", bron)) |>
-    dplyr::count(waarde, name = "aantal", sort = TRUE)
+    dplyr::count(waarde, reden, name = "aantal", sort = TRUE)
 
   list(
     voor_filter = n_voor_filter,
