@@ -24,6 +24,7 @@ r-webshot2 = "*"
 [tasks]
 app = "Rscript -e \"shiny::runApp('.', launch.browser = TRUE)\""
 kaart = "Rscript main.R"
+prepare-data = "Rscript scripts/prepare_data.R"
 
 # Ontwikkelen: tests en scripts voor data
 [feature.dev.dependencies]
@@ -32,7 +33,6 @@ r-writexl = "*"
 
 [feature.dev.tasks]
 test = "Rscript tests/testthat.R"
-prepare-data = "Rscript scripts/prepare_data.R"
 
 [environments]
 default = { solve-group = "default" }

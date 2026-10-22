@@ -71,8 +71,8 @@ ui <- fluidPage(
       width = 3,
 
       h4("Data"),
-      fileInput("studenten_file", "Studenten data (.xlsx)",
-                accept = c(".xlsx", ".xls")),
+      fileInput("studenten_file", "Studenten data (.xlsx of .csv)",
+                accept = c(".xlsx", ".xls", ".csv")),
       div(
         class = "data-links",
         actionLink("gebruik_demo", "Gebruik demodata", icon = icon("flask")),
@@ -90,6 +90,14 @@ ui <- fluidPage(
 
       selectInput("niveau", "Niveau",
                   choices = c("gemeente", "wijk")),
+
+      selectInput("jaargang", "Jaargang kaart (CBS)",
+                  choices = beschikbare_jaargangen(config_default)),
+      uiOutput("jaargang_ontbreekt_ui"),
+      div(
+        class = "data-links",
+        actionLink("jaargang_ophalen_link", "Andere jaargang ophalen", icon = icon("download"))
+      ),
 
       conditionalPanel(
         "input.niveau == 'gemeente'",
@@ -123,6 +131,7 @@ ui <- fluidPage(
                   selected = "Blues"),
 
       checkboxInput("toon_labels", "Toon namen op kaart", value = FALSE),
+      checkboxInput("toon_locaties", "Toon schoollocaties", value = FALSE),
 
       textInput("titel", "Titel kaart & tabel"),
       textInput("peildatum", "Peildatum (optioneel)"),
@@ -198,7 +207,8 @@ server <- function(input, output, session) {
   observeEvent(input$studenten_file, {
     tryCatch(
       bron(list(
-        df = laad_studenten_data(input$studenten_file$datapath),
+        df = laad_studenten_data(input$studenten_file$datapath,
+                                 naam = input$studenten_file$name),
         naam = input$studenten_file$name
       )),
       error = function(e) error_state(paste("Kan bestand niet lezen:", e$message))
@@ -214,6 +224,80 @@ server <- function(input, output, session) {
 
   studenten_data <- reactive({
     req(bron())$df
+  })
+
+  # Peildatum uit de data (kolom Peildatum), anders NULL
+  data_peildatum <- reactive({
+    if (is.null(bron())) NULL else peildatum_uit_data(bron()$df)
+  })
+
+  # --- Jaargang ---
+  jaargangen <- reactiveVal(beschikbare_jaargangen(config_default))
+  ophaal_teller <- reactiveVal(0)
+
+  # Bij nieuwe data: jaargang en peildatum uit de data overnemen
+  observeEvent(bron(), {
+    pd <- data_peildatum()
+    if (!is.null(pd)) {
+      updateTextInput(session, "peildatum", value = formatteer_peildatum(pd))
+      jaar <- as.integer(format(pd, "%Y"))
+      if (jaar %in% jaargangen()) updateSelectInput(session, "jaargang", selected = jaar)
+    }
+  })
+
+  output$jaargang_ontbreekt_ui <- renderUI({
+    pd <- data_peildatum()
+    req(pd)
+    jaar <- as.integer(format(pd, "%Y"))
+    req(!jaar %in% jaargangen())
+    div(
+      class = "warning-box",
+      "De data heeft peildatum ", formatteer_peildatum(pd), ", maar de CBS-kaart ",
+      jaar, " is nog niet aanwezig.", br(),
+      actionButton("jaargang_ophalen_data", paste("CBS-data", jaar, "ophalen"),
+                   icon = icon("download"), class = "btn-sm", style = "margin-top: 5px;")
+    )
+  })
+
+  observeEvent(input$jaargang_ophalen_link, {
+    showModal(modalDialog(
+      title = "CBS-data ophalen",
+      p("Download de wijk- en buurtkaart en de postcodetabel van het CBS voor een jaargang.",
+        "Dit kost een paar minuten en ongeveer 400 MB aan downloads (tijdelijk)."),
+      numericInput("ophaal_jaar", "Jaargang", value = as.integer(format(Sys.Date(), "%Y")),
+                   min = 2024, max = 2100, step = 1),
+      footer = tagList(
+        modalButton("Annuleren"),
+        actionButton("jaargang_ophalen_modal", "Ophalen", class = "btn-primary")
+      )
+    ))
+  })
+
+  haal_jaargang_op <- function(jaar) {
+    removeModal()
+    error_state(NULL)
+    tryCatch({
+      withProgress(message = paste("CBS-data", jaar, "ophalen"), value = 0, {
+        maak_referentiedata(
+          jaar, config_default,
+          voortgang = function(fractie, detail) incProgress(fractie, detail = detail)
+        )
+      })
+      jaargangen(beschikbare_jaargangen(config_default))
+      updateSelectInput(session, "jaargang", choices = jaargangen(), selected = jaar)
+      showNotification(paste("CBS-data", jaar, "is toegevoegd."), type = "message")
+    }, error = function(e) {
+      error_state(paste("Ophalen mislukt:", conditionMessage(e)))
+    })
+  }
+
+  observeEvent(input$jaargang_ophalen_data, {
+    haal_jaargang_op(as.integer(format(data_peildatum(), "%Y")))
+  })
+
+  observeEvent(input$jaargang_ophalen_modal, {
+    req(input$ophaal_jaar)
+    haal_jaargang_op(as.integer(input$ophaal_jaar))
   })
 
   output$data_info <- renderUI({
@@ -281,7 +365,10 @@ server <- function(input, output, session) {
     updateTextInput(session, "eigen_breaks",
                     value = paste(unlist(config$breaks), collapse = ", "))
     updateTextInput(session, "titel", value = config$titel %||% "")
-    updateTextInput(session, "peildatum", value = config$peildatum %||% "")
+    pd <- isolate(data_peildatum())
+    updateTextInput(session, "peildatum",
+                    value = if (!is.null(pd)) formatteer_peildatum(pd) else config$peildatum %||% "")
+    updateCheckboxInput(session, "toon_locaties", value = isTRUE(config$toon_locaties))
     updateNumericInput(session, "min_aantal", value = config$tabel$min_aantal %||% 10)
   })
 
@@ -329,6 +416,8 @@ server <- function(input, output, session) {
     config$tabel$min_aantal <- input$min_aantal
     config$visualisatie$kleuren_palet <- input$kleuren_palet
     config$visualisatie$toon_labels <- input$toon_labels
+    config$toon_locaties <- input$toon_locaties
+    if (isTruthy(input$jaargang)) config$jaar <- as.integer(input$jaargang)
     config$filters <- stats::setNames(
       lapply(input$filter_kolommen, function(k) input[[filter_id(k)]]),
       input$filter_kolommen
@@ -424,6 +513,7 @@ server <- function(input, output, session) {
       "Profiel: ", input$profiel, "\n",
       "Gebied: ", config$gebied$naam, "\n",
       "Niveau: ", config$niveau, "\n",
+      "Jaargang kaart: CBS ", config$jaar, "\n",
       "Titel: ", config$titel, "\n",
       "Peildatum: ", config$peildatum, "\n",
       "Filters: ", filters, "\n",
@@ -466,10 +556,10 @@ server <- function(input, output, session) {
     },
     content = function(file) {
       tryCatch(
-        gt::gtsave(resultaten()$tabel, filename = file),
+        sla_tabel_op(resultaten()$tabel, file),
         error = function(e) {
           showNotification(
-            "PNG van de tabel vereist het package webshot2 en Chrome. Gebruik anders de CSV.",
+            "PNG van de tabel vereist Chrome of Edge. Gebruik anders de CSV.",
             type = "error", duration = 10
           )
           stop(e)
