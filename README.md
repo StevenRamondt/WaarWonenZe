@@ -22,7 +22,7 @@ Upload via de app als `.xlsx`. Minimale kolommen (download een voorbeeld via **D
 
 Exports uit de inschrijvingscube (kolomnamen als `[Gemeente]`) werken direct. Overige kolommen zoals `IsBekostigd`, `Leerweg` of `Niveau` kun je in de app als **filter** gebruiken.
 
-**Privacy:** de app heeft alleen gemeente en/of postcode nodig. Verwijder andere persoonsgegevens (naam, studentnummer, geboortedatum) vóór het uploaden. Studentdata hoort nooit in deze repository; `.gitignore` sluit `data/01_raw/` en Excel-bestanden uit.
+De app draait alleen lokaal: geüploade data blijft op je eigen computer. Studentdata hoort nooit in deze repository; `.gitignore` sluit `data/01_raw/` en Excel-bestanden uit.
 
 Na het genereren laat de app zien hoeveel studenten op de kaart staan, buiten het gebied wonen of niet herkend zijn. Onder **Info** staat welke waarden niet herkend werden.
 
