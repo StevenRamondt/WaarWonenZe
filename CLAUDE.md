@@ -9,7 +9,9 @@ Gebouwd voor Nederlandse onderwijsinstellingen (mbo, hbo, wo).
 ```
 ├── app.R                   # Shiny app
 ├── main.R                  # Zelfde pipeline als script (output naar output/)
-├── setup.R                 # Eenmalig: packages installeren + referentiedata checken
+├── Start app.command/.bat  # Dubbelklik-starters (installeren pixi + R automatisch)
+├── pixi.toml / pixi.lock   # R-omgeving (conda-forge) en taken: app, kaart, test
+├── setup.R                 # Alternatief: packages in eigen R/RStudio installeren
 ├── config.yml              # Alle configuratie (profielen, filters, klassen, kleuren)
 ├── R/
 │   └── functions.R         # Alle herbruikbare functies (pipeline: genereer_kaart())
@@ -26,9 +28,13 @@ Gebouwd voor Nederlandse onderwijsinstellingen (mbo, hbo, wo).
 
 ## Gebruik
 
-1. Run `setup.R` (eenmalig)
-2. Start `app.R` → "Gebruik demodata" of upload eigen `.xlsx`
-3. Of: zet data in `data/01_raw/studenten.xlsx`, kies `PROFIEL` en run `main.R`
+1. Dubbelklik `Start app.command` (macOS) / `Start app.bat` (Windows), of `pixi run app`
+2. In de app: "Gebruik demodata" of upload eigen `.xlsx`
+3. Of: zet data in `data/01_raw/studenten.xlsx`, kies `PROFIEL` in main.R en `pixi run kaart`
+4. Tests: `pixi run test`
+
+De app is **alleen voor lokaal gebruik** (geen hosting). Nieuwe R-packages toevoegen via
+`pixi add r-<naam>` zodat `pixi.lock` bijgewerkt wordt; anders werkt de starter niet.
 
 ## Config profielen
 
@@ -64,6 +70,7 @@ mijn_regio:
 - Koppelen op **code** (GM_CODE/WK_CODE), niet op naam
 - Klassen zijn rechts-gesloten: breaks `c(1, 200, 500)` → `1-200`, `201-500`
 - Nooit echte studentdata committen; de repo is publiek
+- Starters: `.bat` met CRLF, `.command` met LF en executable bit (zie .gitattributes)
 
 ## Studentendata vereisten
 

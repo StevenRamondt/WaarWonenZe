@@ -4,12 +4,21 @@ Choropleth kaarten voor visualisatie van studentenherkomst per gemeente of wijk.
 
 ## Quickstart
 
-1. Installeer [R](https://cran.r-project.org) en [RStudio](https://posit.co/download/rstudio-desktop/).
-2. Open `setup.R` in RStudio en klik op **Source**. Dit installeert de benodigde packages (eenmalig).
-3. Open `app.R` en klik op **Run App**.
-4. Klik op **Gebruik demodata** en daarna op **Genereer kaart & tabel**.
+Je hoeft zelf niets te installeren; R en alle packages worden automatisch binnengehaald.
 
-Werkt het? Upload dan je eigen export (`.xlsx`) in plaats van de demodata.
+1. Download deze repository: **Code → Download ZIP**, en pak de zip uit.
+2. Dubbelklik op **`Start app.command`** (macOS) of **`Start app.bat`** (Windows).
+3. De app opent in je browser. Klik op **Gebruik demodata** en daarna op **Genereer kaart & tabel**.
+
+Werkt het? Upload dan je eigen export (`.xlsx`) in plaats van de demodata. Sluit het terminalvenster om de app te stoppen.
+
+De eerste start duurt enkele minuten: [pixi](https://pixi.sh) installeert R en de packages (ca. 1,5 GB) in een eigen map binnen het project. Je bestaande software wordt niet aangeraakt. Daarna start de app binnen enkele seconden. De app draait volledig lokaal; geüploade data verlaat je computer niet.
+
+**macOS: "kan niet worden geopend"?** macOS blokkeert scripts uit een download. Ga naar **Systeeminstellingen → Privacy en beveiliging** en klik bij de melding over `Start app.command` op **Open toch**. Dit is eenmalig.
+
+**Windows: "Windows heeft uw pc beschermd"?** Klik op **Meer informatie → Toch uitvoeren**.
+
+Al pixi geïnstalleerd, of op Linux? Run dan `pixi run app` in de projectmap.
 
 ## Studentendata
 
@@ -28,12 +37,24 @@ Na het genereren laat de app zien hoeveel studenten op de kaart staan, buiten he
 
 ## Gebruik zonder app (main.R)
 
-```r
-PROFIEL <- "haaglanden"
-source("main.R")
+Zet je export in `data/01_raw/studenten.xlsx` (zonder dat bestand gebruikt `main.R` de demodata), kies het profiel bovenin `main.R` en run:
+
+```sh
+pixi run kaart
 ```
 
-Zet je export in `data/01_raw/studenten.xlsx`; zonder dat bestand gebruikt `main.R` de demodata. Output verschijnt in `output/plot/` en `output/tabel/`.
+Output verschijnt in `output/plot/` en `output/tabel/`.
+
+## Ontwikkelen
+
+Met pixi:
+
+```sh
+pixi run test           # tests
+pixi run prepare-data   # referentiedata opnieuw maken
+```
+
+Liever in je eigen RStudio? Run eenmalig `setup.R` (installeert de packages in je eigen R) en open daarna `app.R` → **Run App**.
 
 ## Profielen
 
@@ -66,11 +87,7 @@ Bron: [CBS Wijk- en buurtkaart 2025](https://www.cbs.nl/nl-nl/dossier/nederland-
 
 ## Tests
 
-```r
-source("tests/testthat.R")
-```
-
-De tests draaien ook automatisch op GitHub bij elke push.
+`pixi run test`, of in R: `source("tests/testthat.R")`. De tests draaien ook automatisch op GitHub bij elke push, in dezelfde pixi-omgeving.
 
 ## Licentie
 
