@@ -7,33 +7,35 @@ Gebouwd voor Nederlandse onderwijsinstellingen (mbo, hbo, wo).
 ## Projectstructuur
 
 ```
-choropleth_app/
-├── config.yml              # Alle configuratie (gebieden, kleuren, etc.)
-├── main.R                  # Hoofdscript - run dit bestand
+├── app.R                   # Shiny app
+├── main.R                  # Zelfde pipeline als script (output naar output/)
+├── setup.R                 # Eenmalig: packages installeren + referentiedata checken
+├── config.yml              # Alle configuratie (profielen, filters, klassen, kleuren)
 ├── R/
-│   └── functions.R         # Alle herbruikbare functies
+│   └── functions.R         # Alle herbruikbare functies (pipeline: genereer_kaart())
+├── scripts/
+│   ├── prepare_data.R      # Download + verklein CBS-referentiedata
+│   └── maak_demo_data.R    # Synthetische demodata uit een echte export
 ├── data/
-│   ├── 01_raw/            # Ruwe data (studenten.xlsx, GPKG)
-│   └── reference/         # Referentiebestanden (gemeenten)
-└── output/
-    ├── plot/              # PNG kaarten
-    └── tabel/             # PNG tabellen
+│   ├── reference/          # Voorbewerkte CBS-data (.rds, in git)
+│   ├── voorbeeld/          # Fictieve demodata + template (in git)
+│   └── 01_raw/             # Echte studentdata (NIET in git)
+├── tests/                  # testthat tests (Rscript tests/testthat.R)
+└── output/                 # Gegenereerde PNG/CSV (niet in git)
 ```
 
 ## Gebruik
 
-1. Pas `config.yml` aan voor je instelling en gewenste gebied
-2. Zet studentendata in `data/01_raw/studenten.xlsx`
-3. Zet GPKG in `data/01_raw/`
-4. Open `main.R` en wijzig `PROFIEL` naar gewenste configuratie
-5. Run `main.R`
+1. Run `setup.R` (eenmalig)
+2. Start `app.R` → "Gebruik demodata" of upload eigen `.xlsx`
+3. Of: zet data in `data/01_raw/studenten.xlsx`, kies `PROFIEL` en run `main.R`
 
 ## Config profielen
 
 - `den_haag`: Gemeente Den Haag, wijkniveau
-- `haaglanden`: 9 gemeenten regio Haaglanden, gemeenteniveau
+- `haaglanden`: 9 gemeenten regio Haaglanden, gemeenteniveau (referentiescenario)
 - `zuid_holland`: Alle gemeenten in Zuid-Holland
-- `nederland`: Heel Nederland
+- `nederland`: Heel Nederland, eigen klassegrenzen (referentiescenario)
 
 ## Nieuw gebied toevoegen
 
@@ -45,24 +47,36 @@ mijn_regio:
     naam: "Mijn Regio"
     type: "custom"
     filter:
-      gm_codes: ["GM0001", "GM0002"]
+      gm_codes: ["GM0001", "GM0002"]   # of: provincie: "Zuid-Holland"
   niveau: "gemeente"  # of "wijk"
+  filters:
+    Leerweg: ["BBL"]
+  breaks_preset: "eigen"
+  breaks: [1, 20, 150, 500]
 ```
 
 ## Belangrijke conventies
 
-- Functies staan in `R/functions.R`, niet in main.R
-- Alle paden via `config.yml`, nooit hardcoded
-- Data pipeline: 01_raw → verwerking → output
+- Functies staan in `R/functions.R`, niet in app.R of main.R
+- app.R en main.R gebruiken beide `genereer_kaart()`; geen pipeline dupliceren
+- Alle paden via `config.yml` en `here::here()`, nooit hardcoded
 - Geo data niveaus: `gemeente` of `wijk`
-- GPKG lagen: `gemeenten_v0` en `wijken_v0`
+- Koppelen op **code** (GM_CODE/WK_CODE), niet op naam
+- Klassen zijn rechts-gesloten: breaks `c(1, 200, 500)` → `1-200`, `201-500`
+- Nooit echte studentdata committen; de repo is publiek
 
 ## Studentendata vereisten
 
 Minimale kolommen:
-- `Gemeente` (voor gemeente niveau)
+- `Gemeente` (voor gemeente niveau; naam wordt via alias/normalisatie naar GM_CODE vertaald)
 - `Postcode` (voor wijk niveau — wordt via CBS PC6 koppeltabel omgezet naar wijkcode)
+
+Kolomnamen tussen blokhaken (`[Gemeente]`, cube-export) worden automatisch opgeschoond.
 
 ## Bij fouten
 
 Als iets niet werkt: beschrijf het probleem en voeg oplossing toe aan dit bestand.
+
+- **`show.legend = "polygon"` crasht in ggplot2 ≥ 4.0** (`x must be a vector, not NULL`). Gebruik `show.legend = TRUE`; dat is ook nodig om lege klassen in de legenda te tonen.
+- **dplyr-verbs op een sf-object uit `readRDS()` falen** als sf niet geladen is. `laad_geo_data()` laadt sf daarom expliciet.
+- **Zee/strand bij kustgemeenten**: de CBS GPKG heeft een kolom `water` (`JA`/`NEE`/`B`); `prepare_data.R` houdt alleen `NEE`.
