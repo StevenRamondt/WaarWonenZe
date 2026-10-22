@@ -17,13 +17,21 @@ library(here)
 source(here::here("R", "functions.R"))
 
 # Laad config profielen
-config_all <- yaml::read_yaml(here::here("config.yml"))
-profielen <- setdiff(names(config_all), "default")
+profielen <- profiel_keuzes()
+config_default <- laad_config("default")
 
-# Pre-load referentie data (altijd nodig)
-gemeente_ref <- laad_gemeente_ref(
-  path = here::here("data/reference/Gemeenten alfabetisch 2023.xlsx")
+# Controleer referentiedata (de app start ook als er iets ontbreekt)
+ontbrekend <- ontbrekende_referentiedata(config_default)
+
+BREAKS_KEUZES <- c(
+  "Automatisch" = "auto",
+  "Grote aantallen (1-200 ... 8001-10000)" = "veel",
+  "Middelgrote aantallen (1-20 ... 1001-2000)" = "middel",
+  "Kleine aantallen (1-5 ... 81-100)" = "weinig",
+  "Eigen klassegrenzen" = "eigen"
 )
+
+filter_id <- function(kolom) paste0("filterwaarde_", make.names(kolom))
 
 
 # =============================================================================
@@ -42,6 +50,10 @@ ui <- fluidPage(
       #generate { margin-top: 15px; }
       .error-box { color: #c0392b; background-color: #fdedec; border: 1px solid #e74c3c;
                     padding: 10px; border-radius: 5px; margin: 10px 0; }
+      .warning-box { color: #7d6608; background-color: #fef9e7; border: 1px solid #f1c40f;
+                    padding: 10px; border-radius: 5px; margin: 10px 0; }
+      .info-line { color: #7f8c8d; margin: 5px 0 10px 0; }
+      .data-links { margin-top: -10px; margin-bottom: 10px; }
     "))
   ),
 
@@ -50,7 +62,8 @@ ui <- fluidPage(
       h2("Choropleth Kaarten"),
       p("Visualisatie van studentenherkomst per gemeente of wijk",
         style = "color: #7f8c8d; margin-top: -5px;")
-    )
+    ),
+    windowTitle = "Choropleth Kaarten"
   ),
 
   sidebarLayout(
@@ -60,41 +73,61 @@ ui <- fluidPage(
       h4("Data"),
       fileInput("studenten_file", "Studenten data (.xlsx)",
                 accept = c(".xlsx", ".xls")),
+      div(
+        class = "data-links",
+        actionLink("gebruik_demo", "Gebruik demodata", icon = icon("flask")),
+        " · ",
+        downloadLink("download_template", "Download template")
+      ),
+      uiOutput("data_info"),
 
       hr(),
-      h4("Kolom mapping"),
-      uiOutput("gemeente_kolom_ui"),
-      uiOutput("postcode_kolom_ui"),
+      h4("Gebied"),
 
-      hr(),
-      h4("Configuratie"),
-
-      selectInput("profiel", "Profiel (gebied)",
+      selectInput("profiel", "Profiel",
                   choices = profielen,
                   selected = profielen[1]),
 
-      uiOutput("niveau_ui"),
+      selectInput("niveau", "Niveau",
+                  choices = c("gemeente", "wijk")),
 
-      selectInput("breaks_preset", "Breaks preset",
-                  choices = c("auto", "veel", "middel", "weinig"),
-                  selected = "veel"),
+      conditionalPanel(
+        "input.niveau == 'gemeente'",
+        uiOutput("gemeente_kolom_ui")
+      ),
+      conditionalPanel(
+        "input.niveau == 'wijk'",
+        uiOutput("postcode_kolom_ui")
+      ),
+
+      hr(),
+      h4("Filters"),
+      uiOutput("filter_kolommen_ui"),
+      uiOutput("filter_waarden_ui"),
+
+      hr(),
+      h4("Weergave"),
+
+      selectInput("breaks_preset", "Klassen",
+                  choices = BREAKS_KEUZES,
+                  selected = "auto"),
+      conditionalPanel(
+        "input.breaks_preset == 'eigen'",
+        textInput("eigen_breaks", "Klassegrenzen (komma-gescheiden)",
+                  placeholder = "1, 20, 150, 500, 2000")
+      ),
 
       selectInput("kleuren_palet", "Kleurenpalet",
                   choices = c("Blues", "Reds", "Greens", "Oranges", "Purples",
                               "YlOrRd", "YlGnBu", "RdPu", "BuGn", "BuPu"),
                   selected = "Blues"),
 
-      checkboxInput("toon_labels", "Toon labels op kaart", value = FALSE),
+      checkboxInput("toon_labels", "Toon namen op kaart", value = FALSE),
 
-      hr(),
-      h4("Titel"),
-      textInput("titel", "Titel kaart & tabel", value = "ROC Mondriaan studenten"),
-      textInput("peildatum", "Peildatum (optioneel)", value = "1 okt 2025"),
-
-      hr(),
+      textInput("titel", "Titel kaart & tabel"),
+      textInput("peildatum", "Peildatum (optioneel)"),
       numericInput("min_aantal", "Min. aantal voor tabel", value = 10, min = 1),
 
-      hr(),
       actionButton("generate", "Genereer kaart & tabel",
                    class = "btn-primary btn-block",
                    icon = icon("map"))
@@ -102,7 +135,15 @@ ui <- fluidPage(
 
     mainPanel(
       width = 9,
+      if (length(ontbrekend) > 0) {
+        div(
+          class = "error-box", icon("exclamation-triangle"),
+          " Referentiedata ontbreekt: ", paste(ontbrekend, collapse = ", "),
+          ". Run eerst ", code("Rscript scripts/prepare_data.R"), "."
+        )
+      },
       uiOutput("error_msg"),
+      uiOutput("koppel_msg"),
       tabsetPanel(
         id = "tabs",
         type = "tabs",
@@ -132,7 +173,13 @@ ui <- fluidPage(
           "Info",
           br(),
           h4("Samenvatting"),
-          verbatimTextOutput("samenvatting")
+          verbatimTextOutput("samenvatting"),
+          h4("Niet herkende waarden"),
+          p("Studenten met deze gemeente of postcode staan niet op de kaart.",
+            class = "info-line"),
+          downloadButton("download_niet_herkend", "Download (CSV)"),
+          br(), br(),
+          tableOutput("niet_herkend")
         )
       )
     )
@@ -145,13 +192,46 @@ ui <- fluidPage(
 
 server <- function(input, output, session) {
 
-  # --- Reactive: studenten data ---
-  studenten_data <- reactive({
-    req(input$studenten_file)
-    laad_studenten_data(input$studenten_file$datapath)
+  # --- Studenten data: upload of demo ---
+  bron <- reactiveVal(NULL)
+
+  observeEvent(input$studenten_file, {
+    tryCatch(
+      bron(list(
+        df = laad_studenten_data(input$studenten_file$datapath),
+        naam = input$studenten_file$name
+      )),
+      error = function(e) error_state(paste("Kan bestand niet lezen:", e$message))
+    )
   })
 
-  # --- Reactive: beschikbare kolommen ---
+  observeEvent(input$gebruik_demo, {
+    bron(list(
+      df = laad_studenten_data(here::here(config_default$data$demo)),
+      naam = "demodata (fictief)"
+    ))
+  })
+
+  studenten_data <- reactive({
+    req(bron())$df
+  })
+
+  output$data_info <- renderUI({
+    req(bron())
+    df <- bron()$df
+    p(class = "info-line",
+      icon("table"), " ", bron()$naam, ": ", format(nrow(df), big.mark = ".", decimal.mark = ","),
+      " rijen, ", ncol(df), " kolommen")
+  })
+
+  output$download_template <- downloadHandler(
+    filename = "template_studenten.xlsx",
+    content = function(file) {
+      file.copy(here::here("data", "voorbeeld", "template.xlsx"), file)
+    }
+  )
+
+  # --- Beschikbare kolommen ---
   beschikbare_kolommen <- reactive({
     colnames(studenten_data())
   })
@@ -178,43 +258,81 @@ server <- function(input, output, session) {
       matches <- grep("postcode|pc6|pc4", kolommen, ignore.case = TRUE, value = TRUE)
       if (length(matches) > 0) matches[1] else kolommen[1]
     }
-    selectInput("postcode_kolom", "Postcode kolom (voor wijkniveau)",
+    selectInput("postcode_kolom", "Postcode kolom",
                 choices = kolommen, selected = default)
   })
 
-  # --- Dynamisch niveau op basis van profiel ---
-  output$niveau_ui <- renderUI({
-    config <- laad_config(input$profiel)
-    default_niveau <- config$niveau %||% "gemeente"
-    selectInput("niveau", "Niveau",
-                choices = c("gemeente", "wijk"),
-                selected = default_niveau)
+  # --- Profiel config ---
+  profiel_config <- reactive({
+    laad_config(input$profiel)
   })
 
   # --- Update defaults wanneer profiel wijzigt ---
   observeEvent(input$profiel, {
-    config <- laad_config(input$profiel)
+    config <- profiel_config()
 
+    updateSelectInput(session, "niveau", selected = config$niveau %||% "gemeente")
     updateSelectInput(session, "kleuren_palet",
                       selected = config$visualisatie$kleuren_palet %||% "Blues")
     updateCheckboxInput(session, "toon_labels",
                         value = isTRUE(config$visualisatie$toon_labels))
     updateSelectInput(session, "breaks_preset",
-                      selected = config$breaks_preset %||% "veel")
+                      selected = config$breaks_preset %||% "auto")
+    updateTextInput(session, "eigen_breaks",
+                    value = paste(unlist(config$breaks), collapse = ", "))
+    updateTextInput(session, "titel", value = config$titel %||% "")
+    updateTextInput(session, "peildatum", value = config$peildatum %||% "")
+    updateNumericInput(session, "min_aantal", value = config$tabel$min_aantal %||% 10)
+  })
+
+  # --- Filters ---
+  output$filter_kolommen_ui <- renderUI({
+    df <- studenten_data()
+    keuzes <- filterbare_kolommen(df)
+    standaard <- intersect(names(profiel_config()$filters), keuzes)
+
+    selectizeInput("filter_kolommen", "Filter op kolommen",
+                   choices = keuzes, selected = standaard, multiple = TRUE,
+                   options = list(placeholder = "Geen filter"))
+  })
+
+  output$filter_waarden_ui <- renderUI({
+    df <- studenten_data()
+    config_filters <- profiel_config()$filters
+
+    lapply(input$filter_kolommen, function(kolom) {
+      waarden <- sort(unique(as.character(df[[kolom]])))
+      waarden <- waarden[!is.na(waarden)]
+
+      # Behoud bestaande keuze; anders config-default; anders alles
+      geselecteerd <- isolate(input[[filter_id(kolom)]]) %||%
+        intersect(as.character(config_filters[[kolom]]), waarden)
+      if (length(geselecteerd) == 0) geselecteerd <- waarden
+
+      selectizeInput(filter_id(kolom), kolom,
+                     choices = waarden, selected = geselecteerd, multiple = TRUE)
+    })
   })
 
   # --- Bouw config op basis van UI inputs ---
   active_config <- reactive({
-    req(input$niveau)
-    config <- laad_config(input$profiel)
+    config <- profiel_config()
 
     # Override met UI waarden
     config$niveau <- input$niveau
     config$breaks_preset <- input$breaks_preset
+    if (input$breaks_preset == "eigen") {
+      config$breaks <- parse_breaks(input$eigen_breaks)
+    }
     config$titel <- input$titel
     config$peildatum <- input$peildatum
+    config$tabel$min_aantal <- input$min_aantal
     config$visualisatie$kleuren_palet <- input$kleuren_palet
     config$visualisatie$toon_labels <- input$toon_labels
+    config$filters <- stats::setNames(
+      lapply(input$filter_kolommen, function(k) input[[filter_id(k)]]),
+      input$filter_kolommen
+    )
 
     config
   })
@@ -231,130 +349,48 @@ server <- function(input, output, session) {
 
   # --- Bereken resultaten ---
   resultaten <- eventReactive(input$generate, {
-    req(input$niveau, input$gemeente_kolom, input$postcode_kolom)
     error_state(NULL)
 
-    config <- active_config()
-    studenten <- studenten_data()
-
-    # Valideer kolommen
-    if (config$niveau == "wijk") {
-      if (!input$postcode_kolom %in% colnames(studenten)) {
-        error_state(paste0(
-          "Kolom '", input$postcode_kolom, "' niet gevonden in studenten data. ",
-          "Beschikbare kolommen: ", paste(colnames(studenten), collapse = ", "),
-          ". Pas de 'Postcode kolom' aan of kies niveau 'gemeente'."
-        ))
-        return(NULL)
-      }
-    } else {
-      if (!input$gemeente_kolom %in% colnames(studenten)) {
-        error_state(paste0(
-          "Kolom '", input$gemeente_kolom, "' niet gevonden in studenten data. ",
-          "Beschikbare kolommen: ", paste(colnames(studenten), collapse = ", "),
-          ". Pas de 'Gemeente kolom' aan."
-        ))
-        return(NULL)
-      }
+    if (is.null(bron())) {
+      error_state("Upload eerst studentendata of kies 'Gebruik demodata'.")
+      return(NULL)
     }
 
+    studenten <- studenten_data()
+    kolom <- if (input$niveau == "wijk") input$postcode_kolom else input$gemeente_kolom
+    req(kolom)
+
     tryCatch({
+      config <- active_config()
+
       withProgress(message = "Bezig met berekenen...", value = 0, {
-
-        # [1] Geo data laden
-        incProgress(0.1, detail = "Geo data laden...")
-        geo <- laad_geo_data(
-          gpkg_path = here::here(config$data$gpkg),
-          niveau = config$niveau
-        )
-
-        # [2] Filteren
-        incProgress(0.2, detail = "Data filteren...")
-        geo_filtered <- filter_geo_data(
-          geo = geo,
+        genereer_kaart(
+          studenten = studenten,
           config = config,
-          gemeente_ref = gemeente_ref
-        )
-
-        code_kolom <- if (config$niveau == "gemeente") "GM_CODE" else "WK_CODE"
-        geo_filtered <- verwijder_dubbele_geometrie(geo_filtered, code_kolom)
-
-        # [3] Aggregeren
-        incProgress(0.2, detail = "Studenten aggregeren...")
-
-        # Laad PC6-wijk mapping indien wijk niveau
-        pc6_mapping <- NULL
-        if (config$niveau == "wijk") {
-          pc6_mapping <- maak_postcode_wijk_mapping(
-            path = here::here(config$data$pc6_wijk_ref)
-          )
-        }
-
-        studenten_agg <- aggregeer_studenten(
-          df = studenten,
-          niveau = config$niveau,
           gemeente_kolom = input$gemeente_kolom,
           postcode_kolom = input$postcode_kolom,
-          pc6_wijk_mapping = pc6_mapping
-        )
-
-        data <- merge_studenten_geo(
-          geo = geo_filtered,
-          studenten_agg = studenten_agg,
-          niveau = config$niveau
-        )
-
-        # [4] Categoriseren
-        incProgress(0.2, detail = "Categoriseren...")
-        breaks_info <- bepaal_breaks(
-          data = data$aantal,
-          preset = config$breaks_preset
-        )
-
-        data <- categoriseer_aantallen(data, breaks_info)
-
-        # [5] Plot
-        incProgress(0.2, detail = "Kaart genereren...")
-        locaties_sf <- maak_locaties_sf(config, sf::st_crs(data))
-
-        plot <- maak_choropleth(
-          data = data,
-          config = config,
-          breaks_info = breaks_info,
-          locaties_sf = locaties_sf,
-          niveau = config$niveau
-        )
-
-        # [6] Tabel
-        incProgress(0.1, detail = "Tabel genereren...")
-        tabel <- maak_tabel(
-          data = data,
-          config = config,
-          niveau = config$niveau,
-          min_aantal = input$min_aantal
-        )
-
-        # Tabel data voor CSV export
-        naam_kolom <- if (config$niveau == "gemeente") "GM_NAAM" else "WK_NAAM"
-        tabel_csv <- data |>
-          sf::st_drop_geometry() |>
-          dplyr::select(dplyr::all_of(naam_kolom), aantal) |>
-          dplyr::filter(aantal >= input$min_aantal) |>
-          dplyr::arrange(dplyr::desc(aantal))
-
-        list(
-          plot = plot,
-          tabel = tabel,
-          tabel_csv = tabel_csv,
-          data = data,
-          breaks_info = breaks_info,
-          config = config
+          voortgang = function(fractie, detail) incProgress(fractie, detail = detail)
         )
       })
     }, error = function(e) {
-      error_state(paste("Fout bij genereren:", e$message))
+      error_state(paste("Fout bij genereren:", conditionMessage(e)))
       NULL
     })
+  })
+
+  # --- Koppelrapport melding ---
+  output$koppel_msg <- renderUI({
+    req(resultaten())
+    rapport <- resultaten()$rapport
+    tekst <- beschrijf_koppelrapport(rapport)
+
+    aandeel_niet_herkend <- rapport$niet_herkend / max(rapport$na_filter, 1)
+    if (aandeel_niet_herkend > 0.05 || length(rapport$filters_overgeslagen) > 0) {
+      div(class = "warning-box", icon("exclamation-circle"), " ", tekst,
+          " Zie tab Info voor details.")
+    } else {
+      p(class = "info-line", icon("info-circle"), " ", tekst)
+    }
   })
 
   # --- Output: Choropleth ---
@@ -375,6 +411,14 @@ server <- function(input, output, session) {
     res <- resultaten()
     config <- res$config
     data <- res$data
+    rapport <- res$rapport
+
+    filters <- if (length(config$filters) == 0) {
+      "geen"
+    } else {
+      paste(names(config$filters), vapply(config$filters, paste, character(1), collapse = "/"),
+            sep = " = ", collapse = "; ")
+    }
 
     paste0(
       "Profiel: ", input$profiel, "\n",
@@ -382,18 +426,26 @@ server <- function(input, output, session) {
       "Niveau: ", config$niveau, "\n",
       "Titel: ", config$titel, "\n",
       "Peildatum: ", config$peildatum, "\n",
-      "Breaks preset: ", config$breaks_preset, "\n",
+      "Filters: ", filters, "\n",
+      "Klassen: ", config$breaks_preset, "\n",
       "Kleurenpalet: ", config$visualisatie$kleuren_palet, "\n",
-      "Gemeente kolom: ", input$gemeente_kolom, "\n",
-      "Postcode kolom: ", input$postcode_kolom, "\n",
-      "\n--- Data ---\n",
-      "Aantal gebieden op kaart: ", nrow(data), "\n",
-      "Totaal studenten in gebied: ", sum(data$aantal, na.rm = TRUE), "\n",
+      "\n--- Studenten ---\n",
+      "In bestand: ", rapport$voor_filter, "\n",
+      "Na filters: ", rapport$na_filter, "\n",
+      "Op de kaart: ", rapport$op_kaart, "\n",
+      "Buiten het gebied: ", rapport$buiten_gebied, "\n",
+      "Niet herkend: ", rapport$niet_herkend, "\n",
+      "\n--- Kaart ---\n",
+      "Aantal gebieden: ", nrow(data), "\n",
       "Gebieden met studenten: ", sum(data$aantal > 0, na.rm = TRUE), "\n",
       "Max studenten in 1 gebied: ", max(data$aantal, na.rm = TRUE), "\n",
-      "\n--- Categorieën ---\n",
-      paste(res$breaks_info$labels, collapse = ", "), "\n"
+      "Categorieën: ", paste(res$breaks_info$labels, collapse = ", "), "\n"
     )
+  })
+
+  output$niet_herkend <- renderTable({
+    req(resultaten())
+    utils::head(resultaten()$rapport$niet_herkend_waarden, 50)
   })
 
   # --- Downloads ---
@@ -403,14 +455,7 @@ server <- function(input, output, session) {
       genereer_bestandsnaam(config, config$niveau, "plot")
     },
     content = function(file) {
-      ggplot2::ggsave(
-        filename = file,
-        plot = resultaten()$plot,
-        width = 13,
-        height = 10,
-        units = "in",
-        bg = "white"
-      )
+      sla_plot_op(resultaten()$plot, file)
     }
   )
 
@@ -420,7 +465,16 @@ server <- function(input, output, session) {
       genereer_bestandsnaam(config, config$niveau, "tabel")
     },
     content = function(file) {
-      gt::gtsave(resultaten()$tabel, filename = file)
+      tryCatch(
+        gt::gtsave(resultaten()$tabel, filename = file),
+        error = function(e) {
+          showNotification(
+            "PNG van de tabel vereist het package webshot2 en Chrome. Gebruik anders de CSV.",
+            type = "error", duration = 10
+          )
+          stop(e)
+        }
+      )
     }
   )
 
@@ -430,7 +484,14 @@ server <- function(input, output, session) {
       genereer_bestandsnaam(config, config$niveau, "tabel", extensie = "csv")
     },
     content = function(file) {
-      write.csv(resultaten()$tabel_csv, file, row.names = FALSE)
+      write.csv(resultaten()$tabel_data, file, row.names = FALSE)
+    }
+  )
+
+  output$download_niet_herkend <- downloadHandler(
+    filename = "niet_herkend.csv",
+    content = function(file) {
+      write.csv(resultaten()$rapport$niet_herkend_waarden, file, row.names = FALSE)
     }
   )
 }
