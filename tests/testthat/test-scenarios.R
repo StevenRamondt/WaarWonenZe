@@ -40,3 +40,21 @@ test_that("aantallen op de kaart tellen op tot het rapport", {
   res <- genereer_kaart(demo, laad_config("zuid_holland"))
   expect_equal(sum(res$data$aantal), res$rapport$op_kaart)
 })
+
+test_that("jaargang 2026 werkt voor gemeente en wijk", {
+  for (profiel in c("haaglanden", "den_haag")) {
+    config <- laad_config(profiel)
+    config$jaar <- 2026
+    res <- genereer_kaart(demo, config)
+    expect_gt(res$rapport$op_kaart, 0)
+    expect_no_error(ggplot2::ggplot_build(res$plot))
+  }
+})
+
+test_that("tabel als PNG (Chrome of Edge)", {
+  skip_if(is.null(zoek_browser_voor_png()), "geen Chrome of Edge gevonden")
+  res <- genereer_kaart(demo, laad_config("haaglanden"))
+  pad <- tempfile(fileext = ".png")
+  suppressMessages(sla_tabel_op(res$tabel, pad))
+  expect_gt(file.size(pad), 1000)
+})

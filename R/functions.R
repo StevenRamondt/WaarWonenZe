@@ -107,26 +107,88 @@ laad_rds_cached <- function(pad) {
   .referentie_cache[[pad]]
 }
 
+REFERENTIE_TYPES <- c("gemeenten", "wijken", "pc6")
+
+
+#' Pad naar een referentiebestand
+#'
+#' @param config List met configuratie (data$referentie)
+#' @param type Character, "gemeenten", "wijken" of "pc6"
+#' @param jaar Integer, jaargang
+#'
+#' @return Character, absoluut pad
+referentie_pad <- function(config, type, jaar) {
+  here::here(config$data$referentie, paste0(type, "_", jaar, ".rds"))
+}
+
+
+#' Jaargangen waarvan alle referentiebestanden aanwezig zijn
+#'
+#' @param config List met configuratie (data$referentie)
+#'
+#' @return Integer vector, aflopend (nieuwste eerst)
+#'
+#' @export
+beschikbare_jaargangen <- function(config) {
+
+  bestanden <- list.files(here::here(config$data$referentie), pattern = "_\\d{4}\\.rds$")
+  jaren <- unique(as.integer(sub(".*_(\\d{4})\\.rds$", "\\1", bestanden)))
+  compleet <- vapply(jaren, function(jaar) {
+    all(file.exists(vapply(REFERENTIE_TYPES, referentie_pad, character(1),
+                           config = config, jaar = jaar)))
+  }, logical(1))
+
+  sort(jaren[compleet], decreasing = TRUE)
+}
+
+
+#' Bepaal de jaargang van de kaart
+#'
+#' Volgorde: config$jaar, anders het jaar van de peildatum (als die jaargang
+#' beschikbaar is), anders de nieuwste beschikbare jaargang.
+#'
+#' @param config List met configuratie
+#' @param peildatum Date of NULL
+#'
+#' @return Integer jaar, of NA als er geen referentiedata is
+#'
+#' @export
+kies_jaargang <- function(config, peildatum = NULL) {
+
+  if (!is.null(config$jaar)) return(as.integer(config$jaar))
+
+  beschikbaar <- beschikbare_jaargangen(config)
+  if (!is.null(peildatum)) {
+    jaar <- as.integer(format(peildatum, "%Y"))
+    if (jaar %in% beschikbaar) return(jaar)
+  }
+  if (length(beschikbaar) == 0) NA_integer_ else beschikbaar[1]
+}
+
 
 #' Controleer of de referentiedata aanwezig is
 #'
-#' @param config List met configuratie
+#' @param config List met configuratie (data$referentie, jaar)
 #'
 #' @return Character vector met ontbrekende bestanden (leeg als alles er is)
 #'
 #' @export
 ontbrekende_referentiedata <- function(config) {
 
-  paden <- unlist(config$data[c("gemeenten", "wijken", "pc6")])
-  paden[!file.exists(here::here(paden))]
+  jaar <- kies_jaargang(config)
+  if (is.na(jaar)) return(here::here(config$data$referentie))
+
+  paden <- vapply(REFERENTIE_TYPES, referentie_pad, character(1), config = config, jaar = jaar)
+  paden[!file.exists(paden)]
 }
 
 
 #' Laad geo data
 #'
-#' Laadt de voorbewerkte gemeente- of wijkgrenzen (zie scripts/prepare_data.R).
+#' Laadt de voorbewerkte gemeente- of wijkgrenzen van de gekozen jaargang
+#' (zie maak_referentiedata()).
 #'
-#' @param config List met configuratie (data$gemeenten, data$wijken)
+#' @param config List met configuratie (data$referentie, jaar)
 #' @param niveau Character, "gemeente" of "wijk"
 #'
 #' @return sf object met GM_CODE, GM_NAAM, PROVINCIE (en WK_CODE, WK_NAAM)
@@ -137,29 +199,31 @@ laad_geo_data <- function(config, niveau) {
   # readRDS laadt sf niet zelf; zonder sf werken dplyr-verbs niet op sf objecten
   requireNamespace("sf", quietly = TRUE)
 
-  pad <- if (niveau == "gemeente") config$data$gemeenten else config$data$wijken
-  laad_rds_cached(here::here(pad))
+  type <- if (niveau == "gemeente") "gemeenten" else "wijken"
+  laad_rds_cached(referentie_pad(config, type, kies_jaargang(config)))
 }
 
 
 #' Laad PC6 koppeltabel
 #'
-#' @param config List met configuratie (data$pc6)
+#' @param config List met configuratie (data$referentie, jaar)
 #'
 #' @return Data frame met PC6, WK_CODE en GM_CODE
 #'
 #' @export
 laad_pc6_mapping <- function(config) {
-  laad_rds_cached(here::here(config$data$pc6))
+  laad_rds_cached(referentie_pad(config, "pc6", kies_jaargang(config)))
 }
 
 
 #' Laad studenten data
 #'
-#' Leest Excel bestand en verwijdert brackets uit kolomnamen.
+#' Leest Excel (.xlsx/.xls) of CSV en verwijdert brackets uit kolomnamen.
 #'
-#' @param path Character, pad naar Excel bestand
-#' @param sheet Character of integer, sheet naam of nummer
+#' @param path Character, pad naar het bestand
+#' @param sheet Character of integer, sheet naam of nummer (alleen Excel)
+#' @param naam Character, oorspronkelijke bestandsnaam (bepaalt het type;
+#'   nodig bij Shiny-uploads, die een tijdelijke naam krijgen)
 #'
 #' @return Data frame met studenten data
 #'
@@ -167,9 +231,13 @@ laad_pc6_mapping <- function(config) {
 #' df <- laad_studenten_data("data/voorbeeld/studenten_demo.xlsx")
 #'
 #' @export
-laad_studenten_data <- function(path, sheet = 1) {
+laad_studenten_data <- function(path, sheet = 1, naam = path) {
 
-  df <- readxl::read_excel(path, sheet = sheet)
+  df <- if (grepl("\\.(csv|txt)$", naam, ignore.case = TRUE)) {
+    lees_csv(path)
+  } else {
+    readxl::read_excel(path, sheet = sheet)
+  }
 
   # Verwijder brackets uit kolomnamen
   colnames(df) <- gsub("[", "", colnames(df), fixed = TRUE)
@@ -177,6 +245,93 @@ laad_studenten_data <- function(path, sheet = 1) {
   colnames(df) <- trimws(colnames(df))
 
   return(df)
+}
+
+
+#' Lees CSV zoals Excel die op Windows maakt
+#'
+#' Herkent ; en , als scheidingsteken, UTF-8 en Windows-1252 als codering en
+#' zet WAAR/ONWAAR (Nederlandse Excel) om naar TRUE/FALSE. Alle overige
+#' kolommen blijven tekst, zodat postcodes niet als getal worden gelezen.
+#'
+#' @param path Character, pad naar CSV
+#'
+#' @return Data frame
+lees_csv <- function(path) {
+
+  ruw <- readBin(path, "raw", file.info(path)$size)
+  if (length(ruw) >= 3 && all(ruw[1:3] == as.raw(c(0xEF, 0xBB, 0xBF)))) {
+    ruw <- ruw[-(1:3)]   # BOM
+  }
+  tekst <- rawToChar(ruw)
+  Encoding(tekst) <- "UTF-8"
+  if (!validUTF8(tekst)) {
+    tekst <- iconv(tekst, from = "windows-1252", to = "UTF-8")
+  }
+
+  eerste_regel <- sub("[\r\n].*", "", tekst)
+  tel <- function(teken) nchar(gsub(paste0("[^", teken, "]"), "", eerste_regel))
+  sep <- if (tel(";") >= tel(",")) ";" else ","
+
+  df <- utils::read.csv(
+    text = tekst, sep = sep, colClasses = "character", check.names = FALSE,
+    na.strings = c("", "NA"), strip.white = TRUE
+  )
+
+  for (kolom in names(df)) {
+    waarden <- toupper(stats::na.omit(df[[kolom]]))
+    if (length(waarden) > 0 && all(waarden %in% c("TRUE", "FALSE", "WAAR", "ONWAAR"))) {
+      df[[kolom]] <- toupper(df[[kolom]]) %in% c("TRUE", "WAAR")
+      df[[kolom]][is.na(df[[kolom]])] <- NA
+    }
+  }
+
+  df
+}
+
+
+#' Peildatum uit de studentdata
+#'
+#' @param df Data frame met (optioneel) een kolom Peildatum
+#'
+#' @return Date, of NULL als er geen eenduidige peildatum is
+#'
+#' @export
+peildatum_uit_data <- function(df) {
+
+  if (!"Peildatum" %in% names(df)) return(NULL)
+
+  x <- df$Peildatum
+  datum <- if (inherits(x, c("Date", "POSIXt"))) {
+    as.Date(x)
+  } else {
+    x <- gsub("/", "-", trimws(as.character(x)))
+    d <- rep(as.Date(NA), length(x))
+    iso <- grepl("^\\d{4}-\\d{1,2}-\\d{1,2}", x)
+    nl <- grepl("^\\d{1,2}-\\d{1,2}-\\d{4}", x)
+    d[iso] <- as.Date(substr(x[iso], 1, 10), format = "%Y-%m-%d")
+    d[nl] <- as.Date(x[nl], format = "%d-%m-%Y")
+    d
+  }
+
+  datum <- unique(stats::na.omit(datum))
+  if (length(datum) == 1) datum else NULL
+}
+
+
+#' Peildatum als tekst, bijv. "1 okt 2026"
+#'
+#' @param datum Date
+#'
+#' @return Character
+#'
+#' @export
+formatteer_peildatum <- function(datum) {
+
+  maanden <- c("jan", "feb", "mrt", "apr", "mei", "jun",
+               "jul", "aug", "sep", "okt", "nov", "dec")
+  paste(as.integer(format(datum, "%d")), maanden[as.integer(format(datum, "%m"))],
+        format(datum, "%Y"))
 }
 
 
@@ -194,6 +349,189 @@ filterbare_kolommen <- function(df, max_waarden = 50) {
 
   n_uniek <- vapply(df, function(x) length(unique(x[!is.na(x)])), integer(1))
   names(df)[n_uniek >= 2 & n_uniek <= max_waarden]
+}
+
+
+# -----------------------------------------------------------------------------
+# REFERENTIEDATA MAKEN (CBS)
+# -----------------------------------------------------------------------------
+
+lees_webpagina <- function(url) {
+  tryCatch(
+    paste(suppressWarnings(readLines(url(url), warn = FALSE)), collapse = "\n"),
+    error = function(e) NULL
+  )
+}
+
+
+#' Zoek de CBS-downloads voor een jaargang
+#'
+#' De bestandsnamen verschillen per jaar, daarom worden ze opgezocht:
+#' de kaart in de CBS-bestandsmap (hoogste versie), de PC6-tabel via de
+#' maatwerkpagina (wisselend weeknummer), de gemeentelijst via een vast patroon.
+#'
+#' @param jaar Integer, jaargang
+#'
+#' @return List met URL's kaart, pc6 en gemeenten
+#'
+#' @export
+zoek_cbs_urls <- function(jaar) {
+
+  # Kaart: hoogste versie in de bestandsmap
+  map <- "https://geodata.cbs.nl/files/Wijkenbuurtkaart/"
+  html <- lees_webpagina(map) %||% ""
+  kaarten <- unique(regmatches(html, gregexpr(paste0("WijkBuurtkaart_", jaar, "_v\\d+\\.zip"), html))[[1]])
+  if (length(kaarten) == 0) {
+    stop("De CBS wijk- en buurtkaart ", jaar, " is nog niet gepubliceerd (meestal in juni).")
+  }
+  versies <- as.integer(sub(".*_v(\\d+)\\.zip", "\\1", kaarten))
+  kaart <- paste0(map, kaarten[which.max(versies)])
+
+  # PC6: maatwerkpagina, gepubliceerd rond september
+  pc6 <- NULL
+  for (week in 30:52) {
+    pagina <- lees_webpagina(sprintf(
+      "https://www.cbs.nl/nl-nl/maatwerk/%d/%02d/buurt-wijk-en-gemeente-%d-voor-postcode-huisnummer",
+      jaar, week, jaar
+    ))
+    if (is.null(pagina)) next
+    links <- regmatches(pagina, gregexpr("https://download\\.cbs\\.nl/postcode/[^\"]+\\.zip", pagina))[[1]]
+    if (length(links) > 0) {
+      pc6 <- links[1]
+      break
+    }
+  }
+  if (is.null(pc6)) {
+    stop("De CBS PC6-koppeltabel ", jaar, " is nog niet gepubliceerd (meestal in september).")
+  }
+
+  gemeenten <- paste0(
+    "https://www.cbs.nl/-/media/cbs/onze-diensten/methoden/classificaties/overig/",
+    "gemeenten-alfabetisch-", jaar, ".xlsx"
+  )
+
+  list(kaart = kaart, pc6 = pc6, gemeenten = gemeenten)
+}
+
+
+#' Maak referentiedata voor een jaargang
+#'
+#' Downloadt de CBS-bestanden, houdt alleen land (kolom water = NEE),
+#' vereenvoudigt de geometrie en schrijft compacte .rds-bestanden.
+#'
+#' @param jaar Integer, jaargang
+#' @param config List met configuratie (data$referentie)
+#' @param download_dir Character, map voor downloads (wordt hergebruikt)
+#' @param voortgang Functie(fractie, detail) voor voortgangsmeldingen
+#'
+#' @return Character vector met de geschreven bestanden
+#'
+#' @export
+maak_referentiedata <- function(jaar, config,
+                                download_dir = file.path(tempdir(), "cbs"),
+                                voortgang = function(fractie, detail) message(detail)) {
+
+  # Vereenvoudiging in meters (RD): geen zichtbare naden op regiokaarten
+  tolerantie <- c(gemeente = 25, wijk = 10)
+
+  map <- file.path(download_dir, jaar)
+  dir.create(map, recursive = TRUE, showWarnings = FALSE)
+  out_dir <- here::here(config$data$referentie)
+  dir.create(out_dir, recursive = TRUE, showWarnings = FALSE)
+
+  voortgang(0.05, "CBS-bestanden zoeken...")
+  urls <- zoek_cbs_urls(jaar)
+
+  oude_timeout <- options(timeout = 3600)
+  on.exit(options(oude_timeout), add = TRUE)
+
+  bestanden <- lapply(names(urls), function(naam) {
+    bestand <- file.path(map, basename(urls[[naam]]))
+    if (!file.exists(bestand)) {
+      voortgang(0.1, paste("Downloaden:", basename(bestand)))
+      utils::download.file(urls[[naam]], bestand, mode = "wb", quiet = TRUE)
+    }
+    if (grepl("\\.zip$", bestand)) utils::unzip(bestand, exdir = map)
+    bestand
+  })
+  names(bestanden) <- names(urls)
+
+  gpkg_path <- list.files(map, pattern = "\\.gpkg$", recursive = TRUE, full.names = TRUE)[1]
+  pc6_path <- list.files(map, pattern = "^pc6hnr.*\\.csv$", recursive = TRUE, full.names = TRUE)[1]
+
+  # Provincie per gemeente (sheet met de kolom GemeentecodeGM)
+  sheets <- readxl::excel_sheets(bestanden$gemeenten)
+  provincies <- NULL
+  for (sheet in sheets) {
+    blad <- readxl::read_excel(bestanden$gemeenten, sheet = sheet)
+    if ("GemeentecodeGM" %in% names(blad)) {
+      provincies <- dplyr::select(blad, GM_CODE = GemeentecodeGM, PROVINCIE = Provincienaam)
+      break
+    }
+  }
+  if (is.null(provincies)) stop("Geen provincie-indeling gevonden in ", basename(bestanden$gemeenten))
+
+  # Laagnamen verschillen per jaar (gemeenten_v0, gemeenten, ...)
+  # Kolomnamen ook: v0 heeft gm_code, v1 (met kerncijfers) gemeentecode
+  lagen <- sf::st_layers(gpkg_path)$name
+  kolom_namen <- c(
+    GM_CODE = "gm_code|gemeentecode", GM_NAAM = "gm_naam|gemeentenaam",
+    WK_CODE = "wk_code|wijkcode", WK_NAAM = "wk_naam|wijknaam"
+  )
+  lees_laag <- function(patroon, kolommen) {
+    laag <- grep(patroon, lagen, value = TRUE)[1]
+    x <- sf::st_read(gpkg_path, layer = laag, quiet = TRUE) |>
+      sf::st_zm(drop = TRUE) |>
+      dplyr::filter(water == "NEE")
+    bron <- vapply(kolom_namen[kolommen], function(p) {
+      grep(paste0("^(", p, ")$"), names(x), value = TRUE)[1]
+    }, character(1))
+    x <- dplyr::select(x, dplyr::all_of(bron))
+    sf::st_geometry(x) <- "geometry"
+    x
+  }
+
+  voortgang(0.2, "Gemeenten verwerken...")
+  gemeenten <- lees_laag("^gemeenten", c("GM_CODE", "GM_NAAM")) |>
+    dplyr::left_join(provincies, by = "GM_CODE") |>
+    sf::st_simplify(preserveTopology = TRUE, dTolerance = tolerantie[["gemeente"]])
+
+  voortgang(0.2, "Wijken verwerken...")
+  wijken <- lees_laag("^wijken", c("WK_CODE", "WK_NAAM", "GM_CODE", "GM_NAAM")) |>
+    dplyr::left_join(provincies, by = "GM_CODE") |>
+    sf::st_simplify(preserveTopology = TRUE, dTolerance = tolerantie[["wijk"]])
+
+  stopifnot(!anyDuplicated(gemeenten$GM_CODE), !anyDuplicated(wijken$WK_CODE))
+  if (anyNA(gemeenten$PROVINCIE)) {
+    stop("Provincie ontbreekt voor: ", paste(gemeenten$GM_NAAM[is.na(gemeenten$PROVINCIE)], collapse = ", "))
+  }
+
+  voortgang(0.2, "PC6-koppeltabel verwerken (8 mln regels)...")
+  pc6_raw <- utils::read.csv2(pc6_path, colClasses = "character")
+  wijk_kolom <- grep("^Wijk", names(pc6_raw), value = TRUE)[1]
+  gem_kolom <- grep("^Gemeente", names(pc6_raw), value = TRUE)[1]
+
+  # Meerdere huisnummers per PC6: de meest voorkomende wijk wint
+  pc6 <- data.frame(PC6 = pc6_raw$PC6, Wijk = pc6_raw[[wijk_kolom]], Gemeente = pc6_raw[[gem_kolom]]) |>
+    dplyr::count(PC6, Wijk, Gemeente) |>
+    dplyr::arrange(PC6, dplyr::desc(n)) |>
+    dplyr::distinct(PC6, .keep_all = TRUE) |>
+    dplyr::transmute(PC6, WK_CODE = paste0("WK", Wijk), GM_CODE = paste0("GM", Gemeente)) |>
+    as.data.frame()
+  rm(pc6_raw)
+
+  voortgang(0.15, "Opslaan...")
+  paden <- c(
+    gemeenten = referentie_pad(config, "gemeenten", jaar),
+    wijken = referentie_pad(config, "wijken", jaar),
+    pc6 = referentie_pad(config, "pc6", jaar)
+  )
+  saveRDS(gemeenten, paden[["gemeenten"]], compress = "xz")
+  saveRDS(wijken, paden[["wijken"]], compress = "xz")
+  saveRDS(pc6, paden[["pc6"]], compress = "xz")
+
+  rm(list = paden[paden %in% ls(.referentie_cache)], envir = .referentie_cache)
+  unname(paden)
 }
 
 
@@ -708,13 +1046,22 @@ maak_choropleth <- function(data, config, breaks_info, locaties_sf = NULL, nivea
       )
   }
 
-  # Voeg locatie markers toe indien aanwezig
+  # Voeg schoollocaties toe indien aanwezig
   if (!is.null(locaties_sf) && nrow(locaties_sf) > 0) {
     p <- p +
       ggplot2::geom_sf(
         data = locaties_sf,
-        color = "black",
-        size = 3
+        ggplot2::aes(shape = "Schoollocatie"),
+        fill = "black",
+        color = "white",
+        size = if (niveau == "gemeente") 3 else 3.5,
+        stroke = 0.8,
+        inherit.aes = FALSE
+      ) +
+      ggplot2::scale_shape_manual(values = c(Schoollocatie = 21), name = NULL) +
+      ggplot2::guides(
+        fill = ggplot2::guide_legend(order = 1),
+        shape = ggplot2::guide_legend(order = 2)
       )
   }
 
@@ -739,38 +1086,61 @@ maak_titel <- function(config) {
 }
 
 
-#' Maak locaties sf object
+#' Laad schoollocaties
 #'
-#' Converteert locaties uit config naar sf object met juiste CRS.
+#' @param config List met configuratie (data$locaties)
 #'
-#' @param config List met configuratie (bevat locaties)
-#' @param target_crs CRS van de target data
-#'
-#' @return sf object of NULL als geen locaties
+#' @return Data frame met code, adres, plaats, campus, lat, lon
 #'
 #' @export
-maak_locaties_sf <- function(config, target_crs) {
+laad_locaties <- function(config) {
 
-  if (is.null(config$locaties) || length(config$locaties) == 0) {
-    return(NULL)
+  pad <- here::here(config$data$locaties %||% "")
+  if (!nzchar(config$data$locaties %||% "") || !file.exists(pad)) return(NULL)
+
+  locaties <- lees_csv(pad)
+  # Excel met Nederlandse instellingen schrijft decimalen met een komma
+  locaties$lat <- as.numeric(gsub(",", ".", locaties$lat))
+  locaties$lon <- as.numeric(gsub(",", ".", locaties$lon))
+  locaties[!is.na(locaties$lat) & !is.na(locaties$lon), , drop = FALSE]
+}
+
+
+#' Maak locaties sf object
+#'
+#' Schoollocaties als punten in de CRS van de kaart, alleen als
+#' config$toon_locaties aan staat. Staat er een filter op campus of locatie,
+#' dan worden alleen de bijbehorende locaties getoond. Locaties buiten het
+#' kaartgebied vallen weg.
+#'
+#' @param config List met configuratie (toon_locaties, data$locaties, filters)
+#' @param data sf object met de gebieden van de kaart
+#'
+#' @return sf object of NULL als er geen locaties te tonen zijn
+#'
+#' @export
+maak_locaties_sf <- function(config, data) {
+
+  if (!isTRUE(config$toon_locaties)) return(NULL)
+
+  locaties <- laad_locaties(config)
+  if (is.null(locaties) || nrow(locaties) == 0) return(NULL)
+
+  # Filter op campus/locatie: kolommen uit de cube-export
+  koppeling <- c(CampusOms = "campus", LocatieCode = "code", LocatieOms = "adres")
+  for (kolom in intersect(names(config$filters), names(koppeling))) {
+    waarden <- as.character(config$filters[[kolom]])
+    if (length(waarden) == 0) next
+    locaties <- locaties[locaties[[koppeling[[kolom]]]] %in% waarden, , drop = FALSE]
   }
+  if (nrow(locaties) == 0) return(NULL)
 
-  # Converteer naar data frame
-  locaties_df <- do.call(rbind, lapply(config$locaties, function(x) {
-    data.frame(naam = x$naam, lat = x$lat, lon = x$lon)
-  }))
+  locaties_sf <- sf::st_as_sf(locaties, coords = c("lon", "lat"), crs = 4326) |>
+    sf::st_transform(sf::st_crs(data))
 
-  # Maak sf object
-  locaties_sf <- sf::st_as_sf(
-    locaties_df,
-    coords = c("lon", "lat"),
-    crs = 4326
-  )
-
-  # Transformeer naar target CRS
-  locaties_sf <- sf::st_transform(locaties_sf, target_crs)
-
-  return(locaties_sf)
+  binnen <- lengths(sf::st_intersects(locaties_sf, sf::st_union(data))) > 0
+  if (!any(binnen)) return(NULL)
+  locaties_sf[binnen, ]
 }
 
 
@@ -898,7 +1268,7 @@ genereer_kaart <- function(studenten, config,
     data = data,
     config = config,
     breaks_info = breaks_info,
-    locaties_sf = maak_locaties_sf(config, sf::st_crs(data)),
+    locaties_sf = maak_locaties_sf(config, data),
     niveau = niveau
   )
 
@@ -1016,9 +1386,43 @@ sla_plot_op <- function(plot, path, width = 13, height = 10) {
 }
 
 
+#' Zorg dat webshot2 een browser vindt
+#'
+#' webshot2 zoekt standaard Google Chrome. Op veel Windows-laptops staat
+#' alleen Microsoft Edge (ook Chromium); die wordt dan gebruikt.
+#'
+#' @return Pad naar de browser, of NULL als er geen gevonden is
+#'
+#' @export
+zoek_browser_voor_png <- function() {
+
+  # De eerste start van een headless browser duurt op trage laptops (en in CI)
+  # soms langer dan de standaard 10 seconden
+  options(chromote.timeout = max(getOption("chromote.timeout", 10), 60))
+
+  if (nzchar(Sys.getenv("CHROMOTE_CHROME"))) return(Sys.getenv("CHROMOTE_CHROME"))
+
+  chrome <- tryCatch(suppressMessages(chromote::find_chrome()), error = function(e) NULL)
+  if (!is.null(chrome) && nzchar(chrome)) return(chrome)
+
+  kandidaten <- c(
+    "C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe",
+    "C:/Program Files/Microsoft/Edge/Application/msedge.exe",
+    file.path(Sys.getenv("LOCALAPPDATA"), "Microsoft/Edge/Application/msedge.exe"),
+    "/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge",
+    "/usr/bin/microsoft-edge", "/usr/bin/chromium", "/usr/bin/chromium-browser"
+  )
+  gevonden <- kandidaten[file.exists(kandidaten)]
+  if (length(gevonden) == 0) return(NULL)
+
+  Sys.setenv(CHROMOTE_CHROME = gevonden[1])
+  gevonden[1]
+}
+
+
 #' Sla tabel op
 #'
-#' Slaat gt tabel op als PNG. Vereist het package webshot2 en Chrome/Chromium.
+#' Slaat gt tabel op als PNG. Vereist webshot2 en Chrome of Edge.
 #'
 #' @param tabel gt object
 #' @param path Character, volledig pad voor output
@@ -1026,6 +1430,7 @@ sla_plot_op <- function(plot, path, width = 13, height = 10) {
 #' @export
 sla_tabel_op <- function(tabel, path) {
 
+  zoek_browser_voor_png()
   gt::gtsave(tabel, filename = path)
 
   message(paste("Tabel opgeslagen:", path))

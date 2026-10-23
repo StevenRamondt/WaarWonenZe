@@ -59,6 +59,14 @@ if (!file.exists(studenten_pad)) {
 studenten <- laad_studenten_data(studenten_pad)
 message(paste("Studenten data geladen:", nrow(studenten), "records"))
 
+# Jaargang en peildatum uit de kolom Peildatum (tenzij vastgezet in config.yml)
+peildatum <- peildatum_uit_data(studenten)
+config$jaar <- kies_jaargang(config, peildatum)
+if (is.null(config$peildatum) && !is.null(peildatum)) {
+  config$peildatum <- formatteer_peildatum(peildatum)
+}
+message(paste("Jaargang kaart: CBS", config$jaar))
+
 # -----------------------------------------------------------------------------
 # KAART EN TABEL MAKEN
 # -----------------------------------------------------------------------------

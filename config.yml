@@ -7,18 +7,25 @@ default:
   # Instelling
   # ---------------------------------------------------------------------------
   titel: "ROC Mondriaan studenten"
-  peildatum: "1 okt 2025"
+  # peildatum: "1 okt 2026"   # standaard uit de kolom Peildatum van de data
+
+  # ---------------------------------------------------------------------------
+  # Jaargang van de CBS-kaart
+  # Standaard het jaar van de peildatum in de data, anders de nieuwste.
+  # Vastzetten kan met bijv. jaar: 2025
+  # ---------------------------------------------------------------------------
+  jaar: null
 
   # ---------------------------------------------------------------------------
   # Data bestanden
-  # Referentiedata wordt meegeleverd; bijwerken met scripts/prepare_data.R
+  # Referentiedata per jaargang (gemeenten_<jaar>.rds etc.) wordt meegeleverd;
+  # een nieuwe jaargang ophalen kan in de app of met scripts/prepare_data.R
   # ---------------------------------------------------------------------------
   data:
     studenten: "data/01_raw/studenten.xlsx"   # alleen voor main.R
     demo: "data/voorbeeld/studenten_demo.xlsx"
-    gemeenten: "data/reference/gemeenten_2025.rds"
-    wijken: "data/reference/wijken_2025.rds"
-    pc6: "data/reference/pc6_2025.rds"
+    referentie: "data/reference"
+    locaties: "data/locaties_roc_mondriaan.csv"
 
   # ---------------------------------------------------------------------------
   # Filters op studentkenmerken: kolom -> toegestane waarden
@@ -52,15 +59,9 @@ default:
     min_aantal: 10
 
   # ---------------------------------------------------------------------------
-  # Locatie markers (schoollocaties)
+  # Schoollocaties (uit data$locaties) tonen op de kaart
   # ---------------------------------------------------------------------------
-  locaties: []
-    # - naam: "Aspasialaan"
-    #   lat: 52.0531923
-    #   lon: 4.2694465
-    # - naam: "Europa"
-    #   lat: 51.9935904
-    #   lon: 4.2263662
+  toon_locaties: false
 
 # =============================================================================
 # Gebied definities
@@ -77,6 +78,7 @@ den_haag:
   visualisatie:
     kleuren_palet: "Reds"
     toon_labels: true
+  toon_locaties: true
 
 haaglanden:
   inherits: default
@@ -97,6 +99,7 @@ haaglanden:
         - "GM1926"  # Pijnacker-Nootdorp
   niveau: "gemeente"
   breaks_preset: "veel"
+  toon_locaties: true
   visualisatie:
     kleuren_palet: "Reds"
     toon_labels: true

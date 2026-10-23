@@ -1,0 +1,69 @@
+name: starters
+
+# Rooktest: werkt dubbelklikken op "Start app" op een schone machine?
+# Zonder vooraf geïnstalleerde pixi, vanuit een map met spaties in het pad.
+
+on:
+  pull_request:
+    paths:
+      - "Start app.*"
+      - "pixi.toml"
+      - "pixi.lock"
+      - "app.R"
+      - ".github/workflows/starters.yml"
+  workflow_dispatch:
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: "OneDrive - ROC Mondriaan/WaarWonenZe"
+
+      - name: Start app.bat
+        shell: pwsh
+        working-directory: "OneDrive - ROC Mondriaan/WaarWonenZe"
+        run: |
+          $p = Start-Process -FilePath ".\Start app.bat" -PassThru `
+            -RedirectStandardOutput "$env:RUNNER_TEMP\out.txt" `
+            -RedirectStandardError "$env:RUNNER_TEMP\err.txt"
+          $logs = "$env:RUNNER_TEMP\out.txt", "$env:RUNNER_TEMP\err.txt"
+          $deadline = (Get-Date).AddMinutes(25)
+          $url = $null
+          while ((Get-Date) -lt $deadline -and -not $p.HasExited) {
+            $m = Select-String -Path $logs -Pattern 'Listening on (http://\S+)' | Select-Object -First 1
+            if ($m) { $url = $m.Matches[0].Groups[1].Value; break }
+            Start-Sleep -Seconds 5
+          }
+          Get-Content $logs
+          if (-not $url) { throw "De app is niet gestart" }
+          $pagina = Invoke-WebRequest $url -UseBasicParsing
+          if ($pagina.Content -notmatch 'Choropleth Kaarten') { throw "Onverwachte pagina op $url" }
+          Write-Host "App draait op $url"
+          Stop-Process -Id $p.Id -Force
+
+  macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: "map met spaties/WaarWonenZe"
+
+      - name: Start app.command
+        working-directory: "map met spaties/WaarWonenZe"
+        env:
+          R_BROWSER: /usr/bin/true
+        run: |
+          ./"Start app.command" > "$RUNNER_TEMP/app.log" 2>&1 &
+          pid=$!
+          for i in $(seq 1 300); do
+            url=$(grep -oE 'Listening on http://[^ ]+' "$RUNNER_TEMP/app.log" | head -1 | cut -d' ' -f3)
+            [ -n "$url" ] && break
+            kill -0 $pid 2>/dev/null || break   # starter is gestopt
+            sleep 5
+          done
+          cat "$RUNNER_TEMP/app.log"
+          [ -n "$url" ] || { echo "De app is niet gestart"; exit 1; }
+          curl -s "$url" | grep -q "Choropleth Kaarten"
+          echo "App draait op $url"
