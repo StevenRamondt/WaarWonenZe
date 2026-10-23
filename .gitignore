@@ -22,5 +22,6 @@ output/
 # R graphics device output
 Rplots.pdf
 
-# pixi omgeving (wordt lokaal aangemaakt)
-.pixi/
+# pixi omgeving (wordt lokaal aangemaakt), behalve de projectinstellingen
+.pixi/*
+!.pixi/config.toml

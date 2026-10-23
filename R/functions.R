@@ -1396,6 +1396,10 @@ sla_plot_op <- function(plot, path, width = 13, height = 10) {
 #' @export
 zoek_browser_voor_png <- function() {
 
+  # De eerste start van een headless browser duurt op trage laptops (en in CI)
+  # soms langer dan de standaard 10 seconden
+  options(chromote.timeout = max(getOption("chromote.timeout", 10), 60))
+
   if (nzchar(Sys.getenv("CHROMOTE_CHROME"))) return(Sys.getenv("CHROMOTE_CHROME"))
 
   chrome <- tryCatch(suppressMessages(chromote::find_chrome()), error = function(e) NULL)

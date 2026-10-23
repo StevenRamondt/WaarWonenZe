@@ -56,9 +56,11 @@ jobs:
           R_BROWSER: /usr/bin/true
         run: |
           ./"Start app.command" > "$RUNNER_TEMP/app.log" 2>&1 &
+          pid=$!
           for i in $(seq 1 300); do
             url=$(grep -oE 'Listening on http://[^ ]+' "$RUNNER_TEMP/app.log" | head -1 | cut -d' ' -f3)
             [ -n "$url" ] && break
+            kill -0 $pid 2>/dev/null || break   # starter is gestopt
             sleep 5
           done
           cat "$RUNNER_TEMP/app.log"

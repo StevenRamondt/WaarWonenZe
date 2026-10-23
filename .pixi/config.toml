@@ -1,0 +1,3 @@
+# R (conda) kan niet tegen spaties in het pad, bijv. "Mijn projecten".
+# Zet de omgeving daarom buiten de projectmap, in de pixi-cache.
+detached-environments = true
